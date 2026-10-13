@@ -1,1 +1,6 @@
+plugins {
+    // JDK 17이 없으면 Gradle이 toolchain을 자동으로 내려받도록 해주는 리졸버
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '0.8.0'
+}
+
 rootProject.name = 'shima-backend'

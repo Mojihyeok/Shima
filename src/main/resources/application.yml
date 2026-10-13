@@ -1,8 +1,28 @@
+# ===== 공용 (모든 프로파일) =====
 spring:
   profiles:
     default: dev
 
+server:
+  port: ${PORT:8080}   # Render 등 호스팅이 PORT를 지정
+
+# 쉬마 앱 설정
+shima:
+  phone-hash-salt: ${SHIMA_PHONE_SALT:dev-only-change-me}
+  qr-token-ttl-minutes: 10
+  jwt:
+    # HS256 서명키 — 32바이트 이상. 운영에선 반드시 환경변수로 교체
+    secret: ${SHIMA_JWT_SECRET:dev-only-jwt-secret-change-me-32bytes-minimum!!}
+    ttl-hours: 168   # 7일 — 매장 태블릿에서 매일 재로그인하지 않도록
+  naver:
+    # 네이버 검색 API (네이버 클라우드 플랫폼 NAVER API HUB의 Client ID/Secret) — 키는 환경변수로만. 비어 있으면 진단 기능만 꺼짐
+    client-id: ${NAVER_CLIENT_ID:}
+    client-secret: ${NAVER_CLIENT_SECRET:}
+  # CORS 허용 오리진 (dev: localhost + 사설망 IP — 폰/태블릿 테스트용)
+  cors-origin-patterns: ${SHIMA_CORS:http://localhost:[*],http://127.0.0.1:[*],http://192.168.*.*:[*],http://10.*.*.*:[*],http://172.*.*.*:[*]}
+
 ---
+# ===== dev: H2 인메모리 (별도 설치 불필요) =====
 spring:
   config:
     activate:
@@ -18,30 +38,31 @@ spring:
   jpa:
     hibernate:
       ddl-auto: update
-    show-sql: true
+    show-sql: false   # 필요할 때만 true (샘플 이력 삽입 로그가 많음)
+    open-in-view: false
     properties:
       hibernate:
         format_sql: true
 
+shima:
+  dev:
+    sample-history: true   # 그래프·리포트 개발용 가짜 방문 이력 (발표/실운영 수치로 쓰지 말 것)
+
 ---
+# ===== prod: PostgreSQL =====
 spring:
   config:
     activate:
       on-profile: prod
   datasource:
-    url: ${DB_URL}
+    url: ${DB_URL}            # 예: jdbc:postgresql://<host>/<db>?sslmode=require
     username: ${DB_USER}
     password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 3    # 무료 DB 연결 수 절약
   jpa:
     hibernate:
-      ddl-auto: validate
+      ddl-auto: update        # PoC 단계: 엔티티 기준으로 테이블 자동 생성. 운영 안정화 시 Flyway + validate로 전환 (TODO_LATER)
     show-sql: false
-
-server:
-  port: 8080
-
-# 쉬마 앱 설정 (전화번호 해시 salt 등은 환경변수로)
-shima:
-  phone-hash-salt: ${SHIMA_PHONE_SALT:dev-only-change-me}
-  qr-token-ttl-minutes: 10
+    open-in-view: false
