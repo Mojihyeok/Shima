@@ -66,3 +66,7 @@ spring:
       ddl-auto: update        # PoC 단계: 엔티티 기준으로 테이블 자동 생성. 운영 안정화 시 Flyway + validate로 전환 (TODO_LATER)
     show-sql: false
     open-in-view: false
+    properties:
+      hibernate:
+        # 테이블을 만들 스키마. Supabase는 public이 외부 API에 노출되므로 DB_SCHEMA=shima 권장 (스키마는 미리 생성)
+        default_schema: ${DB_SCHEMA:public}
