@@ -4,6 +4,8 @@ import kr.ac.ajou.shima.domain.Customer;
 import kr.ac.ajou.shima.domain.Store;
 import kr.ac.ajou.shima.domain.VisitLog;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
 import java.util.List;
@@ -28,4 +30,15 @@ public interface VisitLogRepository extends JpaRepository<VisitLog, Long> {
 
     /** 매장의 기간 내 방문 (주간 집계용) */
     List<VisitLog> findByStoreAndVisitedAtBetween(Store store, Instant from, Instant to);
+
+    /** 손님별 누적 방문 수·마지막 방문 — 매장 전체를 쿼리 1번으로 (손님마다 2번씩 조회하던 N+1 제거) */
+    interface CustomerVisitStat {
+        Long getCustomerId();
+        Long getVisitCount();
+        Instant getLastVisitAt();
+    }
+
+    @Query("select v.customer.id as customerId, count(v) as visitCount, max(v.visitedAt) as lastVisitAt " +
+           "from VisitLog v where v.store = :store group by v.customer.id")
+    List<CustomerVisitStat> visitStatsByStore(@Param("store") Store store);
 }

@@ -124,15 +124,18 @@ public class OwnerService {
         for (VisitLog v : visitLogRepository.findByStoreAndVisitedAtGreaterThanEqualOrderByVisitedAtDesc(store, startOfToday)) {
             byCustomer.putIfAbsent(v.getCustomer().getId(), v);
         }
-        return byCustomer.values().stream().map(v -> toSummary(v.getCustomer())).toList();
+        if (byCustomer.isEmpty()) return List.of();
+        Map<Long, VisitLogRepository.CustomerVisitStat> stats = visitStats(store);
+        return byCustomer.values().stream().map(v -> toSummary(v.getCustomer(), stats)).toList();
     }
 
     /** 전체 단골 목록 — 마지막 방문 최신순 */
     @Transactional(readOnly = true)
     public List<CustomerSummary> customers() {
         Store store = currentStore();
+        Map<Long, VisitLogRepository.CustomerVisitStat> stats = visitStats(store);
         return customerRepository.findByStore(store).stream()
-                .map(this::toSummary)
+                .map(c -> toSummary(c, stats))
                 .sorted(Comparator.comparing(CustomerSummary::lastVisitAt,
                         Comparator.nullsLast(Comparator.reverseOrder())))
                 .toList();
@@ -148,10 +151,18 @@ public class OwnerService {
         rewardGrantRepository.save(new RewardGrant(store, customer, null, GrantType.MANUAL, req.memo()));
     }
 
-    private CustomerSummary toSummary(Customer c) {
-        int count = (int) visitLogRepository.countByCustomer(c);
-        Instant last = visitLogRepository.findTopByCustomerOrderByVisitedAtDesc(c)
-                .map(VisitLog::getVisitedAt).orElse(null);
+    private Map<Long, VisitLogRepository.CustomerVisitStat> visitStats(Store store) {
+        Map<Long, VisitLogRepository.CustomerVisitStat> m = new HashMap<>();
+        for (VisitLogRepository.CustomerVisitStat st : visitLogRepository.visitStatsByStore(store)) {
+            m.put(st.getCustomerId(), st);
+        }
+        return m;
+    }
+
+    private CustomerSummary toSummary(Customer c, Map<Long, VisitLogRepository.CustomerVisitStat> stats) {
+        VisitLogRepository.CustomerVisitStat st = stats.get(c.getId());
+        int count = st == null ? 0 : st.getVisitCount().intValue();
+        Instant last = st == null ? null : st.getLastVisitAt();
         return new CustomerSummary(c.getId(), c.getPhoneLast4(), c.getName(), count, c.getFirstVisitAt(), last);
     }
 

@@ -60,7 +60,8 @@ spring:
     password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
     hikari:
-      maximum-pool-size: 3    # 무료 DB 연결 수 절약
+      maximum-pool-size: 5        # Supabase Session pooler 무료 한도(15) 안에서 여유 있게
+      connection-timeout: 10000   # 연결 대기 최대 10초 (기본 30초 → 막히면 빨리 실패)
   jpa:
     hibernate:
       ddl-auto: update        # PoC 단계: 엔티티 기준으로 테이블 자동 생성. 운영 안정화 시 Flyway + validate로 전환 (TODO_LATER)
