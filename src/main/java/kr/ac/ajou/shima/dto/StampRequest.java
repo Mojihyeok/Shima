@@ -7,5 +7,6 @@ public record StampRequest(
         @NotBlank String phone,   // 숫자만 또는 하이픈 포함, 서버에서 정규화
         String name,
         String birthday,          // "MM-dd" (선택)
-        String source             // 유입 경로 자기보고 (선택): instagram/blog/friend/pass
+        String source,            // 유입 경로 자기보고 (선택): instagram/blog/friend/pass
+        Boolean agreed            // 개인정보 수집·이용 동의 — 처음 적립(또는 동의 기록 없음)일 때만 필요
 ) {}

@@ -27,6 +27,7 @@ public class OwnerService {
     private final CustomerRepository customerRepository;
     private final VisitLogRepository visitLogRepository;
     private final RewardGrantRepository rewardGrantRepository;
+    private final CustomerDataService customerDataService;
     private final QrTokenService qrTokenService;
     private final StatsService statsService;
     private final DiagnosisService diagnosisService;
@@ -34,7 +35,8 @@ public class OwnerService {
     public OwnerService(StoreRepository storeRepository, CustomerRepository customerRepository,
                         VisitLogRepository visitLogRepository, RewardGrantRepository rewardGrantRepository,
                         QrTokenService qrTokenService, StatsService statsService,
-                        DiagnosisService diagnosisService) {
+                        DiagnosisService diagnosisService, CustomerDataService customerDataService) {
+        this.customerDataService = customerDataService;
         this.statsService = statsService;
         this.diagnosisService = diagnosisService;
         this.storeRepository = storeRepository;
@@ -149,6 +151,16 @@ public class OwnerService {
                 .filter(c -> c.getStore().getId().equals(store.getId()))
                 .orElseThrow(() -> new IllegalArgumentException("해당 매장의 손님이 아닙니다."));
         rewardGrantRepository.save(new RewardGrant(store, customer, null, GrantType.MANUAL, req.memo()));
+    }
+
+    /** 손님 데이터 삭제 (손님이 매장에서 삭제를 요청했을 때) */
+    @Transactional
+    public void deleteCustomer(Long customerId) {
+        Store store = currentStore();
+        Customer customer = customerRepository.findById(customerId)
+                .filter(c -> c.getStore().getId().equals(store.getId()))
+                .orElseThrow(() -> new IllegalArgumentException("해당 매장의 손님이 아닙니다."));
+        customerDataService.delete(customer, "owner");
     }
 
     private Map<Long, VisitLogRepository.CustomerVisitStat> visitStats(Store store) {

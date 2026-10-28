@@ -10,6 +10,9 @@ server:
 shima:
   phone-hash-salt: ${SHIMA_PHONE_SALT:dev-only-change-me}
   qr-token-ttl-minutes: 10
+  privacy:
+    # 손님이 동의한 개인정보 고지문 버전 — 고지문 문구를 바꾸면 같이 올림 (손님 웹 ConsentNotice와 맞출 것)
+    consent-version: v1-2026-10
   jwt:
     # HS256 서명키 — 32바이트 이상. 운영에선 반드시 환경변수로 교체
     secret: ${SHIMA_JWT_SECRET:dev-only-jwt-secret-change-me-32bytes-minimum!!}

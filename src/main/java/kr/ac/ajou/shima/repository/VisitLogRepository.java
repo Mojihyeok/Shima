@@ -31,6 +31,11 @@ public interface VisitLogRepository extends JpaRepository<VisitLog, Long> {
     /** 매장의 기간 내 방문 (주간 집계용) */
     List<VisitLog> findByStoreAndVisitedAtBetween(Store store, Instant from, Instant to);
 
+    /** 손님 데이터 삭제용 */
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("delete from VisitLog v where v.customer = :customer")
+    int deleteByCustomer(@Param("customer") Customer customer);
+
     /** 손님별 누적 방문 수·마지막 방문 — 매장 전체를 쿼리 1번으로 (손님마다 2번씩 조회하던 N+1 제거) */
     interface CustomerVisitStat {
         Long getCustomerId();

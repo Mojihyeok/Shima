@@ -70,6 +70,13 @@ public class OwnerController {
     }
 
     /** 태블릿용 QR — 30초마다 폴링, 토큰은 서버가 알아서 교체 */
+    /** 손님 데이터 삭제 — 복구 불가 */
+    @DeleteMapping("/customers/{customerId}")
+    public ResponseEntity<Void> deleteCustomer(@PathVariable Long customerId) {
+        ownerService.deleteCustomer(customerId);
+        return ResponseEntity.noContent().build();
+    }
+
     @GetMapping("/qr")
     public QrResponse qr() {
         return ownerService.rotatingQr();

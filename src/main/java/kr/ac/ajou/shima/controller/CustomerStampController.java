@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import kr.ac.ajou.shima.dto.LandingResponse;
 import kr.ac.ajou.shima.dto.StampRequest;
 import kr.ac.ajou.shima.dto.StampResponse;
+import kr.ac.ajou.shima.dto.WithdrawRequest;
 import kr.ac.ajou.shima.service.StampService;
 import org.springframework.web.bind.annotation.*;
 
@@ -29,5 +30,14 @@ public class CustomerStampController {
     public StampResponse stamp(@PathVariable String token,
                                @Valid @RequestBody StampRequest request) {
         return stampService.stamp(token, request);
+    }
+
+    /** 손님 본인 정보 삭제 — 등록 여부와 관계없이 같은 응답 */
+    @PostMapping("/{token}/withdraw")
+    public java.util.Map<String, Object> withdraw(@PathVariable String token,
+                                                  @Valid @RequestBody WithdrawRequest request) {
+        stampService.withdraw(token, request);
+        return java.util.Map.of("done", true,
+                "message", "등록된 정보가 있었다면 모두 삭제했어요. 도장 기록도 함께 사라져요.");
     }
 }

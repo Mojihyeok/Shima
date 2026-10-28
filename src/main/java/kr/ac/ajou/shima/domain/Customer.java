@@ -35,6 +35,13 @@ public class Customer {
     @Column(name = "first_visit_at")
     private Instant firstVisitAt;
 
+    /** 개인정보 수집·이용 동의 시각과 동의한 고지문 버전 (동의 전에는 손님 행을 만들지 않음) */
+    @Column(name = "consented_at")
+    private Instant consentedAt;
+
+    @Column(name = "consent_version", length = 30)
+    private String consentVersion;
+
     protected Customer() {}
 
     public Customer(Store store, String phoneHash, String phoneLast4) {
@@ -53,4 +60,8 @@ public class Customer {
     public void setBirthday(String birthday) { this.birthday = birthday; }
     public Instant getFirstVisitAt() { return firstVisitAt; }
     public void setFirstVisitAt(Instant firstVisitAt) { this.firstVisitAt = firstVisitAt; }
+    public Instant getConsentedAt() { return consentedAt; }
+    public String getConsentVersion() { return consentVersion; }
+    public boolean hasConsent() { return consentedAt != null; }
+    public void agree(String version, Instant at) { this.consentVersion = version; this.consentedAt = at; }
 }
