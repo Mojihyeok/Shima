@@ -6,11 +6,13 @@ import kr.ac.ajou.shima.dto.StampRequest;
 import kr.ac.ajou.shima.dto.StampResponse;
 import kr.ac.ajou.shima.repository.*;
 import kr.ac.ajou.shima.dto.WithdrawRequest;
+import kr.ac.ajou.shima.ratelimit.RateLimiter;
 import kr.ac.ajou.shima.support.PhoneHasher;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -30,6 +32,7 @@ public class StampService {
     private final RewardGrantRepository rewardGrantRepository;
     private final PhoneHasher phoneHasher;
     private final CustomerDataService customerDataService;
+    private final RateLimiter rateLimiter;
     private final String consentVersion;
 
     public StampService(QrTokenRepository qrTokenRepository,
@@ -39,6 +42,7 @@ public class StampService {
                         RewardGrantRepository rewardGrantRepository,
                         PhoneHasher phoneHasher,
                         CustomerDataService customerDataService,
+                        RateLimiter rateLimiter,
                         @Value("${shima.privacy.consent-version}") String consentVersion) {
         this.qrTokenRepository = qrTokenRepository;
         this.customerRepository = customerRepository;
@@ -47,6 +51,7 @@ public class StampService {
         this.rewardGrantRepository = rewardGrantRepository;
         this.phoneHasher = phoneHasher;
         this.customerDataService = customerDataService;
+        this.rateLimiter = rateLimiter;
         this.consentVersion = consentVersion;
     }
 
@@ -86,6 +91,8 @@ public class StampService {
 
         String digits = normalizePhone(req.phone());
         String hash = phoneHasher.hash(store.getId(), digits);
+        rateLimiter.hit("stamp-phone:" + store.getId() + ":" + hash, 5, Duration.ofMinutes(10),
+                "잠시 후 다시 적립해 주세요.");
 
         // 동의 기록이 없으면(처음 온 손님 포함) 동의를 먼저 받는다 — 동의 전에는 아무것도 저장하지 않음
         Customer existing = customerRepository.findByStoreAndPhoneHash(store, hash).orElse(null);
@@ -135,7 +142,10 @@ public class StampService {
     public void withdraw(String token, WithdrawRequest req) {
         Store store = resolveToken(token).getStore();
         String digits = normalizePhone(req.phone());
-        customerRepository.findByStoreAndPhoneHash(store, phoneHasher.hash(store.getId(), digits))
+        String hash = phoneHasher.hash(store.getId(), digits);
+        rateLimiter.hit("withdraw-phone:" + store.getId() + ":" + hash, 3, Duration.ofDays(1),
+                "오늘은 더 삭제 요청을 할 수 없어요. 매장에 직접 요청해 주세요.");
+        customerRepository.findByStoreAndPhoneHash(store, hash)
                 .ifPresent(c -> customerDataService.delete(c, "customer"));
     }
 

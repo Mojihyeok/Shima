@@ -1,5 +1,8 @@
 package kr.ac.ajou.shima.service;
 
+import kr.ac.ajou.shima.ratelimit.RateLimiter;
+import java.time.Duration;
+
 import kr.ac.ajou.shima.auth.CurrentOwner;
 import kr.ac.ajou.shima.auth.JwtProvider;
 import kr.ac.ajou.shima.auth.UnauthorizedException;
@@ -22,9 +25,11 @@ public class AuthService {
     private final StoreRepository storeRepo;
     private final PasswordEncoder encoder;
     private final JwtProvider jwt;
+    private final RateLimiter rateLimiter;
 
     public AuthService(OwnerUserRepository ownerRepo, StoreRepository storeRepo,
-                       PasswordEncoder encoder, JwtProvider jwt) {
+                       PasswordEncoder encoder, JwtProvider jwt, RateLimiter rateLimiter) {
+        this.rateLimiter = rateLimiter;
         this.ownerRepo = ownerRepo;
         this.storeRepo = storeRepo;
         this.encoder = encoder;
@@ -34,9 +39,18 @@ public class AuthService {
     @Transactional(readOnly = true)
     public LoginResponse login(LoginRequest req) {
         // 아이디가 없든 비번이 틀리든 같은 메시지 (계정 존재 여부 노출 방지)
+        // 아이디별 실패 5번 → 15분 잠금 (비밀번호 대입 방지). 없는 아이디도 똑같이 세서 존재 여부를 숨김
+        String failKey = "login-fail:" + req.loginId().trim().toLowerCase();
+        rateLimiter.checkOnly(failKey, 5, Duration.ofMinutes(15),
+                "비밀번호를 여러 번 틀려서 15분 동안 로그인할 수 없어요.");
         OwnerUser owner = ownerRepo.findByLoginId(req.loginId())
                 .filter(o -> encoder.matches(req.password(), o.getPwHash()))
-                .orElseThrow(() -> new UnauthorizedException("아이디 또는 비밀번호가 맞지 않아요."));
+                .orElse(null);
+        if (owner == null) {
+            rateLimiter.record(failKey);
+            throw new UnauthorizedException("아이디 또는 비밀번호가 맞지 않아요.");
+        }
+        rateLimiter.reset(failKey);
         Store store = storeOf(owner.getId());
         return new LoginResponse(jwt.issue(owner.getId()), store.getName(), owner.getUiMode().name());
     }

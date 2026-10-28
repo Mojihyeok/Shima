@@ -24,9 +24,11 @@ import java.util.Map;
 public class OwnerController {
 
     private final OwnerService ownerService;
+    private final kr.ac.ajou.shima.ratelimit.RateLimiter rateLimiter;
 
-    public OwnerController(OwnerService ownerService) {
+    public OwnerController(OwnerService ownerService, kr.ac.ajou.shima.ratelimit.RateLimiter rateLimiter) {
         this.ownerService = ownerService;
+        this.rateLimiter = rateLimiter;
     }
 
     @GetMapping("/stats/summary")
@@ -37,6 +39,9 @@ public class OwnerController {
     /** 온라인 진단 실행 — body 전부 선택 (상호명·지역·방문자 리뷰 수) */
     @PostMapping("/diagnosis")
     public DiagnosisResponse runDiagnosis(@Valid @RequestBody(required = false) DiagnosisRequest request) {
+        // 네이버 API 사용량 보호 (진단 1회 = 네이버 호출 4회)
+        rateLimiter.hit("diagnosis:" + kr.ac.ajou.shima.auth.CurrentOwner.id(), 10, java.time.Duration.ofHours(1),
+                "진단은 한 시간에 10번까지 할 수 있어요. 잠시 후 다시 해 주세요.");
         return ownerService.runDiagnosis(request);
     }
 

@@ -1,0 +1,51 @@
+# Supabase(PostgreSQL) 매일 백업 — 무료 플랜은 자동 백업이 없어서 직접 보관
+# 결과: Actions 실행 화면의 Artifacts에 db-backup-날짜 (30일 보관)
+# 필요한 Secret: SUPABASE_DB_URL  (Session pooler, URI 형식)
+#   postgresql://postgres.<프로젝트ref>:<DB비밀번호>@aws-?-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require
+name: DB backup
+
+on:
+  schedule:
+    - cron: "0 18 * * *"   # 매일 18:00 UTC = 새벽 3시 (한국)
+  workflow_dispatch:        # Actions 화면에서 "Run workflow"로 바로 실행
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      SCHEMA: shima
+    steps:
+      - name: Check secret
+        run: |
+          if [ -z "$DB_URL" ]; then echo "::error::SUPABASE_DB_URL secret이 없어요"; exit 1; fi
+
+      - name: Dump (pg_dump 17, 쉬마 스키마만)
+        run: |
+          mkdir -p out
+          STAMP=$(TZ=Asia/Seoul date +%Y%m%d-%H%M)
+          echo "STAMP=$STAMP" >> "$GITHUB_ENV"
+          # 서버(Supabase)보다 낮은 버전의 pg_dump는 실패하므로 공식 postgres:17 이미지 사용
+          docker run --rm -e DB_URL postgres:17 \
+            pg_dump "$DB_URL" --schema="$SCHEMA" --format=custom --no-owner --no-privileges \
+            > "out/shima-$STAMP.dump"
+
+      - name: Verify (비어 있지 않은지 확인)
+        run: |
+          SIZE=$(stat -c %s "out/shima-$STAMP.dump")
+          echo "size=$SIZE bytes"
+          TABLES=$(docker run --rm -i postgres:17 pg_restore --list < "out/shima-$STAMP.dump" | grep -c "TABLE DATA" || true)
+          echo "tables with data=$TABLES"
+          if [ "$SIZE" -lt 1000 ] || [ "$TABLES" -lt 5 ]; then echo "::error::백업이 비정상적으로 작아요"; exit 1; fi
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-backup-${{ env.STAMP }}
+          path: out/
+          retention-days: 30
+          if-no-files-found: error

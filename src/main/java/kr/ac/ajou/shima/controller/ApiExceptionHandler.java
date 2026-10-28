@@ -2,6 +2,7 @@ package kr.ac.ajou.shima.controller;
 
 import kr.ac.ajou.shima.auth.UnauthorizedException;
 import kr.ac.ajou.shima.diagnosis.ExternalApiException;
+import kr.ac.ajou.shima.ratelimit.TooManyRequestsException;
 import kr.ac.ajou.shima.service.StampService.ConsentRequiredException;
 import kr.ac.ajou.shima.service.StampService.TokenExpiredException;
 import kr.ac.ajou.shima.service.StampService.TokenInvalidException;
@@ -30,6 +31,14 @@ public class ApiExceptionHandler {
     @ExceptionHandler(UnauthorizedException.class)
     public ResponseEntity<Map<String, String>> unauthorized(UnauthorizedException e) {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "unauthorized", "message", e.getMessage()));
+    }
+
+    /** 요청 횟수 초과 — Retry-After(초) 헤더 포함 */
+    @ExceptionHandler(TooManyRequestsException.class)
+    public ResponseEntity<Map<String, String>> tooMany(TooManyRequestsException e) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", String.valueOf(e.getRetryAfterSeconds()))
+                .body(Map.of("error", "too_many_requests", "message", e.getMessage()));
     }
 
     /** 처음 적립 — 프론트가 동의 화면을 띄운 뒤 agreed=true로 다시 요청 */
