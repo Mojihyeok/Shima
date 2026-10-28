@@ -42,6 +42,10 @@ public class VisitLog {
     @Column(name = "token_id")
     private Long tokenId;
 
+    /** QR 화면이 열린 뒤 적립 완료까지 걸린 시간(ms) — PoC 목표 10초 이내 측정용, 손님 브라우저가 보낸 값 */
+    @Column(name = "stamp_ms")
+    private Integer stampMs;
+
     protected VisitLog() {}
 
     public VisitLog(Store store, Customer customer, Instant visitedAt,
@@ -61,4 +65,6 @@ public class VisitLog {
     public VisitSource getSource() { return source; }
     public boolean isNewVisit() { return newVisit; }
     public Long getTokenId() { return tokenId; }
+    public Integer getStampMs() { return stampMs; }
+    public void setStampMs(Integer stampMs) { this.stampMs = stampMs; }
 }

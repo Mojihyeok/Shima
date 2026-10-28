@@ -3,6 +3,7 @@ package kr.ac.ajou.shima.controller;
 import jakarta.validation.Valid;
 import kr.ac.ajou.shima.dto.LandingResponse;
 import kr.ac.ajou.shima.dto.StampRequest;
+import kr.ac.ajou.shima.dto.SourceRequest;
 import kr.ac.ajou.shima.dto.StampResponse;
 import kr.ac.ajou.shima.dto.WithdrawRequest;
 import kr.ac.ajou.shima.service.StampService;
@@ -40,6 +41,13 @@ public class CustomerStampController {
         rateLimiter.hit("stamp-ip:" + ClientIp.of(http), 60, Duration.ofMinutes(10),
                 "잠시 후 다시 적립해 주세요.");
         return stampService.stamp(token, request);
+    }
+
+    /** 유입 경로 ("어떻게 알고 오셨어요?") — 첫 적립 직후, 선택 */
+    @PostMapping("/{token}/source")
+    public java.util.Map<String, Object> source(@PathVariable String token, @Valid @RequestBody SourceRequest request) {
+        stampService.recordSource(token, request);
+        return java.util.Map.of("done", true);
     }
 
     /** 손님 본인 정보 삭제 — 등록 여부와 관계없이 같은 응답 */

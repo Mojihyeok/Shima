@@ -12,6 +12,10 @@ import kr.ac.ajou.shima.dto.WeekPoint;
 import kr.ac.ajou.shima.dto.WeeklyReport;
 import org.springframework.format.annotation.DateTimeFormat;
 import kr.ac.ajou.shima.service.OwnerService;
+import kr.ac.ajou.shima.service.PocService;
+import kr.ac.ajou.shima.dto.DailyCountRequest;
+import kr.ac.ajou.shima.dto.DailyCountResponse;
+import kr.ac.ajou.shima.dto.PocMetrics;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
@@ -25,10 +29,43 @@ public class OwnerController {
 
     private final OwnerService ownerService;
     private final kr.ac.ajou.shima.ratelimit.RateLimiter rateLimiter;
+    private final PocService pocService;
 
-    public OwnerController(OwnerService ownerService, kr.ac.ajou.shima.ratelimit.RateLimiter rateLimiter) {
+    public OwnerController(OwnerService ownerService, kr.ac.ajou.shima.ratelimit.RateLimiter rateLimiter,
+                           PocService pocService) {
         this.ownerService = ownerService;
         this.rateLimiter = rateLimiter;
+        this.pocService = pocService;
+    }
+
+    // ===== PoC 측정 =====
+
+    /** 하루 전체 손님 수 조회 (date 없으면 오늘) */
+    @GetMapping("/daily-visitors")
+    public DailyCountResponse dailyVisitors(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        return pocService.getDailyCount(date);
+    }
+
+    /** 하루 전체 손님 수 입력/수정 (영수증 건수) — 적립 참여율의 분모 */
+    @PutMapping("/daily-visitors")
+    public DailyCountResponse setDailyVisitors(@Valid @RequestBody DailyCountRequest request) {
+        return pocService.setDailyCount(request);
+    }
+
+    /** 사장님 사용 기록 — {"type":"REPORT_VIEW"} / {"type":"DIAGNOSIS_VIEW"} */
+    @PostMapping("/events")
+    public ResponseEntity<Void> event(@RequestBody Map<String, String> body) {
+        pocService.recordEvent(body.get("type"));
+        return ResponseEntity.noContent().build();
+    }
+
+    /** PoC 성공 지표 (기본: 최근 14일) */
+    @GetMapping("/poc")
+    public PocMetrics poc(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return pocService.metrics(from, to);
     }
 
     @GetMapping("/stats/summary")

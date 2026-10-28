@@ -42,6 +42,10 @@ public class Customer {
     @Column(name = "consent_version", length = 30)
     private String consentVersion;
 
+    /** 유입 경로 자기보고 (처음 적립한 날만 받음): instagram / blog / friend / pass */
+    @Column(name = "acq_source", length = 20)
+    private String acquisitionSource;
+
     protected Customer() {}
 
     public Customer(Store store, String phoneHash, String phoneLast4) {
@@ -63,5 +67,7 @@ public class Customer {
     public Instant getConsentedAt() { return consentedAt; }
     public String getConsentVersion() { return consentVersion; }
     public boolean hasConsent() { return consentedAt != null; }
+    public String getAcquisitionSource() { return acquisitionSource; }
+    public void setAcquisitionSource(String acquisitionSource) { this.acquisitionSource = acquisitionSource; }
     public void agree(String version, Instant at) { this.consentVersion = version; this.consentedAt = at; }
 }

@@ -8,5 +8,6 @@ public record StampRequest(
         String name,
         String birthday,          // "MM-dd" (선택)
         String source,            // 유입 경로 자기보고 (선택): instagram/blog/friend/pass
-        Boolean agreed            // 개인정보 수집·이용 동의 — 처음 적립(또는 동의 기록 없음)일 때만 필요
+        Boolean agreed,           // 개인정보 수집·이용 동의 — 처음 적립(또는 동의 기록 없음)일 때만 필요
+        Integer elapsedMs         // QR 화면 열린 뒤 적립 버튼까지 걸린 시간 (PoC 측정, 선택)
 ) {}

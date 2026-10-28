@@ -5,6 +5,7 @@ import kr.ac.ajou.shima.dto.LandingResponse;
 import kr.ac.ajou.shima.dto.StampRequest;
 import kr.ac.ajou.shima.dto.StampResponse;
 import kr.ac.ajou.shima.repository.*;
+import kr.ac.ajou.shima.dto.SourceRequest;
 import kr.ac.ajou.shima.dto.WithdrawRequest;
 import kr.ac.ajou.shima.ratelimit.RateLimiter;
 import kr.ac.ajou.shima.support.PhoneHasher;
@@ -16,6 +17,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 @Service
@@ -23,6 +25,8 @@ public class StampService {
 
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
     /** 휴대폰 번호: 010/011/016/017/018/019 + 7~8자리 */
+    /** 유입 경로 선택지 (손님 화면 버튼과 맞출 것) */
+    private static final Set<String> SOURCES = Set.of("instagram", "blog", "friend", "pass");
     private static final Pattern MOBILE = Pattern.compile("^01[016789]\\d{7,8}$");
 
     private final QrTokenRepository qrTokenRepository;
@@ -115,12 +119,17 @@ public class StampService {
         Instant startOfToday = LocalDate.now(KST).atStartOfDay(KST).toInstant();
         if (visitLogRepository.existsByCustomerAndVisitedAtGreaterThanEqual(customer, startOfToday)) {
             int stamps = (int) visitLogRepository.countByCustomer(customer);
-            return buildResponse(store, rule, goal, stamps, false, true);
+            return buildResponse(store, rule, goal, stamps, false, true, false);
         }
 
         boolean isNew = (customer.getFirstVisitAt() == null);
         Instant now = Instant.now();
-        visitLogRepository.save(new VisitLog(store, customer, now, VisitSource.QR, isNew, qr.getId()));
+        VisitLog visit = new VisitLog(store, customer, now, VisitSource.QR, isNew, qr.getId());
+        // 적립 소요 시간 — 0~10분 사이 값만 (화면을 켜두고 한참 뒤 누른 경우 등은 제외)
+        if (req.elapsedMs() != null && req.elapsedMs() > 0 && req.elapsedMs() <= 600_000) {
+            visit.setStampMs(req.elapsedMs());
+        }
+        visitLogRepository.save(visit);
         if (isNew) customer.setFirstVisitAt(now);
 
         int stamps = (int) visitLogRepository.countByCustomer(customer);
@@ -131,7 +140,23 @@ public class StampService {
             rewardGrantRepository.save(new RewardGrant(store, customer, rule, GrantType.AUTO, null));
             reached = true;
         }
-        return buildResponse(store, rule, goal, stamps, reached, false);
+        return buildResponse(store, rule, goal, stamps, reached, false, isNew);
+    }
+
+    /** 유입 경로 — 첫 적립한 날, 아직 답하지 않은 손님만 저장 (선택지 밖의 값은 무시) */
+    @Transactional
+    public void recordSource(String token, SourceRequest req) {
+        Store store = resolveToken(token).getStore();
+        String source = req.source().trim().toLowerCase();
+        if (!SOURCES.contains(source)) throw new IllegalArgumentException("알 수 없는 선택이에요.");
+        String digits = normalizePhone(req.phone());
+        String hash = phoneHasher.hash(store.getId(), digits);
+        rateLimiter.hit("source:" + store.getId() + ":" + hash, 3, Duration.ofMinutes(10), "잠시 후 다시 해 주세요.");
+        Instant startOfToday = LocalDate.now(KST).atStartOfDay(KST).toInstant();
+        customerRepository.findByStoreAndPhoneHash(store, hash)
+                .filter(c -> c.getAcquisitionSource() == null)
+                .filter(c -> c.getFirstVisitAt() != null && !c.getFirstVisitAt().isBefore(startOfToday))
+                .ifPresent(c -> c.setAcquisitionSource(source));
     }
 
     /**
@@ -150,7 +175,7 @@ public class StampService {
     }
 
     private StampResponse buildResponse(Store store, RewardRule rule, int goal,
-                                        int stamps, boolean reached, boolean alreadyToday) {
+                                        int stamps, boolean reached, boolean alreadyToday, boolean firstVisit) {
         int remaining = goal > 0 ? (goal - (stamps % goal)) % goal : 0;
         return new StampResponse(
                 store.getName(),
@@ -159,7 +184,8 @@ public class StampService {
                 remaining,
                 reached,
                 rule != null ? rule.getRewardName() : null,
-                alreadyToday
+                alreadyToday,
+                firstVisit
         );
     }
 
