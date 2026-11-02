@@ -13,6 +13,9 @@ import kr.ac.ajou.shima.dto.WeeklyReport;
 import org.springframework.format.annotation.DateTimeFormat;
 import kr.ac.ajou.shima.service.OwnerService;
 import kr.ac.ajou.shima.service.PocService;
+import kr.ac.ajou.shima.service.MarketingService;
+import kr.ac.ajou.shima.dto.MarketingActionRequest;
+import kr.ac.ajou.shima.dto.MarketingActionResponse;
 import kr.ac.ajou.shima.dto.DailyCountRequest;
 import kr.ac.ajou.shima.dto.DailyCountResponse;
 import kr.ac.ajou.shima.dto.PocMetrics;
@@ -30,12 +33,35 @@ public class OwnerController {
     private final OwnerService ownerService;
     private final kr.ac.ajou.shima.ratelimit.RateLimiter rateLimiter;
     private final PocService pocService;
+    private final MarketingService marketingService;
 
     public OwnerController(OwnerService ownerService, kr.ac.ajou.shima.ratelimit.RateLimiter rateLimiter,
-                           PocService pocService) {
+                           PocService pocService, MarketingService marketingService) {
         this.ownerService = ownerService;
         this.rateLimiter = rateLimiter;
         this.pocService = pocService;
+        this.marketingService = marketingService;
+    }
+
+    // ===== 마케팅 실행 기록 (그래프 오버레이) =====
+
+    /** 기간 내 기록 (기본: 최근 26주) */
+    @GetMapping("/actions")
+    public List<MarketingActionResponse> actions(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return marketingService.list(from, to);
+    }
+
+    @PostMapping("/actions")
+    public MarketingActionResponse addAction(@Valid @RequestBody MarketingActionRequest request) {
+        return marketingService.add(request);
+    }
+
+    @DeleteMapping("/actions/{id}")
+    public ResponseEntity<Void> deleteAction(@PathVariable Long id) {
+        marketingService.delete(id);
+        return ResponseEntity.noContent().build();
     }
 
     // ===== PoC 측정 =====
@@ -99,6 +125,12 @@ public class OwnerController {
     public WeeklyReport weeklyReport(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate weekStart) {
         return ownerService.weeklyReport(weekStart);
+    }
+
+    /** 이탈 위험 단골 — 오래 안 온 순 */
+    @GetMapping("/customers/at-risk")
+    public List<kr.ac.ajou.shima.dto.AtRiskCustomer> atRisk(@RequestParam(defaultValue = "50") int limit) {
+        return ownerService.atRiskCustomers(limit);
     }
 
     @GetMapping("/customers/today")

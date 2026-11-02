@@ -28,6 +28,7 @@ public class OwnerService {
     private final VisitLogRepository visitLogRepository;
     private final RewardGrantRepository rewardGrantRepository;
     private final CustomerDataService customerDataService;
+    private final AtRiskService atRiskService;
     private final QrTokenService qrTokenService;
     private final StatsService statsService;
     private final DiagnosisService diagnosisService;
@@ -35,7 +36,9 @@ public class OwnerService {
     public OwnerService(StoreRepository storeRepository, CustomerRepository customerRepository,
                         VisitLogRepository visitLogRepository, RewardGrantRepository rewardGrantRepository,
                         QrTokenService qrTokenService, StatsService statsService,
-                        DiagnosisService diagnosisService, CustomerDataService customerDataService) {
+                        DiagnosisService diagnosisService, CustomerDataService customerDataService,
+                        AtRiskService atRiskService) {
+        this.atRiskService = atRiskService;
         this.customerDataService = customerDataService;
         this.statsService = statsService;
         this.diagnosisService = diagnosisService;
@@ -151,6 +154,11 @@ public class OwnerService {
                 .filter(c -> c.getStore().getId().equals(store.getId()))
                 .orElseThrow(() -> new IllegalArgumentException("해당 매장의 손님이 아닙니다."));
         rewardGrantRepository.save(new RewardGrant(store, customer, null, GrantType.MANUAL, req.memo()));
+    }
+
+    /** 이탈 위험 단골 (평소 주기의 2배 이상 안 옴) */
+    public List<kr.ac.ajou.shima.dto.AtRiskCustomer> atRiskCustomers(int limit) {
+        return atRiskService.list(currentStore(), Math.max(1, Math.min(limit, 100)));
     }
 
     /** 손님 데이터 삭제 (손님이 매장에서 삭제를 요청했을 때) */
