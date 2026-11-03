@@ -108,6 +108,21 @@ public class OwnerController {
         return ownerService.runDiagnosis(request);
     }
 
+    /** AI 언급률 확인 — 웹 검색 AI에게 "동네+업종 추천"을 3번 물어 우리 가게가 나오는지 (참고 지표, 30~60초) */
+    @PostMapping("/diagnosis/ai-check")
+    public kr.ac.ajou.shima.dto.AiMentionResponse aiCheck() {
+        // Claude API 비용 보호 (1회 ≈ 수백 원)
+        rateLimiter.hit("ai-check:" + kr.ac.ajou.shima.auth.CurrentOwner.id(), 3, java.time.Duration.ofDays(1),
+                "AI 확인은 하루 3번까지 할 수 있어요. 내일 다시 해 주세요.");
+        return ownerService.checkAiMentions();
+    }
+
+    /** 최근 AI 언급률 — 한 번도 안 했으면 204 */
+    @GetMapping("/diagnosis/ai-check/latest")
+    public ResponseEntity<kr.ac.ajou.shima.dto.AiMentionResponse> latestAiCheck() {
+        return ownerService.latestAiMentions().map(ResponseEntity::ok).orElse(ResponseEntity.noContent().build());
+    }
+
     /** 최근 진단 결과 — 한 번도 안 했으면 204 */
     @GetMapping("/diagnosis/latest")
     public ResponseEntity<DiagnosisResponse> latestDiagnosis() {

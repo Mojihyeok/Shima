@@ -2,6 +2,7 @@ package kr.ac.ajou.shima.diagnosis;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import kr.ac.ajou.shima.diagnosis.KakaoLocalClient.KakaoPlace;
 import kr.ac.ajou.shima.diagnosis.NaverSearchClient.BlogItem;
 import kr.ac.ajou.shima.diagnosis.NaverSearchClient.BlogResponse;
 import kr.ac.ajou.shima.diagnosis.NaverSearchClient.LocalItem;
@@ -29,7 +30,10 @@ import java.util.regex.Pattern;
  * 쉬마 브랜드 지수 (F1 수집 + F2 점수). 점수는 전부 결정론적 규칙 — LLM 사용 안 함(재현성·설명 가능성).
  * 측정 못 한 축은 0점이 아니라 "제외"하고, 측정된 축 만점 기준으로 100점 환산한다.
  *
- * 네이버 호출: 지역검색 2회 + 블로그검색 2회 = 진단 1회당 4회
+ * 외부 호출: 네이버 지역 2 + 블로그 2, 카카오 키워드 2 = 진단 1회당 6회 (카카오는 실패해도 해당 항목만 제외)
+ *
+ * 축(만점): 찾기 쉬움 20(네이버 지도 8 + 카카오맵 4 + 블로그 8) · AI가 찾기 쉬움 10 · 믿음직함 20 · 살아있음 15
+ *           · 빠짐없음 15 · 다시 옴 30
  */
 @Service
 public class DiagnosisService {
@@ -38,14 +42,16 @@ public class DiagnosisService {
     private static final DateTimeFormatter POSTDATE = DateTimeFormatter.BASIC_ISO_DATE; // yyyyMMdd
 
     private final NaverSearchClient naver;
+    private final KakaoLocalClient kakao;
     private final VisitLogRepository visitRepo;
     private final StatsService statsService;
     private final DiagnosisResultRepository resultRepo;
     private final ObjectMapper objectMapper;
 
-    public DiagnosisService(NaverSearchClient naver, VisitLogRepository visitRepo, StatsService statsService,
+    public DiagnosisService(NaverSearchClient naver, KakaoLocalClient kakao, VisitLogRepository visitRepo, StatsService statsService,
                             DiagnosisResultRepository resultRepo, ObjectMapper objectMapper) {
         this.naver = naver;
+        this.kakao = kakao;
         this.visitRepo = visitRepo;
         this.statsService = statsService;
         this.resultRepo = resultRepo;
@@ -71,8 +77,11 @@ public class DiagnosisService {
         BlogResponse blogSim = naver.blog(blogQuery, "sim");
         BlogResponse blogDate = naver.blog(blogQuery, "date");
 
+        KakaoLookup kk = kakaoLookup(region, name, keyword);
+
         List<Axis> axes = new ArrayList<>();
-        axes.add(exposure(place, name, keyword, blogSim));
+        axes.add(exposure(place, name, keyword, blogSim, kk));
+        axes.add(aiReadiness(place, kk, reviewCount, blogSim, name));
         axes.add(reputation(reviewCount));
         axes.add(activity(blogDate, name));
         axes.add(completeness(place));
@@ -99,11 +108,36 @@ public class DiagnosisService {
         return resultRepo.findFirstByStoreOrderByCreatedAtDesc(store).map(r -> fromJson(r.getDetailJson()));
     }
 
+    // ---------- 카카오맵 조회 (실패해도 진단은 계속) ----------
+
+    /** measured=false면 카카오 항목 제외. rank: 키워드 검색 순위(1~15), 없으면 -1, 검색 안 함 0 */
+    record KakaoLookup(boolean measured, KakaoPlace place, int rank, String note) {}
+
+    private KakaoLookup kakaoLookup(String region, String name, String keyword) {
+        if (!kakao.isConfigured()) return new KakaoLookup(false, null, 0, "카카오맵은 확인하지 않았어요 (키 미설정)");
+        try {
+            KakaoPlace place = kakao.keyword((region + " " + name).trim(), 5).stream()
+                    .filter(p -> sameName(p.placeName(), name)).findFirst().orElse(null);
+            int rank = 0;
+            if (keyword != null) {
+                List<KakaoPlace> top = kakao.keyword(keyword, 15);
+                rank = -1;
+                for (int i = 0; i < top.size(); i++) {
+                    if (sameName(top.get(i).placeName(), name)) { rank = i + 1; break; }
+                }
+            }
+            return new KakaoLookup(true, place, rank, null);
+        } catch (ExternalApiException e) {
+            return new KakaoLookup(false, null, 0, "카카오맵을 확인하지 못했어요 (" + e.getMessage() + ")");
+        }
+    }
+
     // ======================= 축별 규칙 =======================
 
-    /** 찾기 쉬움 (20) = 동네+업종 지역검색 순위(10) + 블로그 언급량(10) */
-    private Axis exposure(LocalItem place, String name, String keyword, BlogResponse blogSim) {
+    /** 찾기 쉬움 (20) = 네이버 지도 순위(8) + 카카오맵 순위(4, 확인 못 하면 제외) + 블로그 언급량(8) */
+    private Axis exposure(LocalItem place, String name, String keyword, BlogResponse blogSim, KakaoLookup kk) {
         List<String> ev = new ArrayList<>();
+        int max = 16;
         int mapPts = 0;
         if (place == null) {
             ev.add("네이버 지도 검색에서 가게를 찾지 못했어요 (상호명·지역을 확인해 주세요)");
@@ -114,18 +148,113 @@ public class DiagnosisService {
                 if (sameName(top.get(i).title(), name)) { rank = i + 1; break; }
             }
             if (rank > 0) {
-                mapPts = 11 - rank; // 1위 10점 … 5위 6점
-                ev.add("'" + keyword + "' 검색 시 " + rank + "번째로 나와요");
+                mapPts = 9 - rank; // 1위 8점 … 5위 4점
+                ev.add("네이버 지도 '" + keyword + "' 검색 시 " + rank + "번째로 나와요");
             } else {
-                ev.add("'" + keyword + "' 검색 상위 5곳에 없어요");
+                ev.add("네이버 지도 '" + keyword + "' 검색 상위 5곳에 없어요");
             }
         }
 
+        int kakaoPts = 0;
+        if (kk.measured() && kk.rank() != 0) {
+            max += 4;
+            if (kk.rank() > 0) {
+                kakaoPts = kk.rank() <= 3 ? 4 : kk.rank() <= 7 ? 3 : 2;
+                ev.add("카카오맵 '" + keyword + "' 검색 시 " + kk.rank() + "번째로 나와요");
+            } else {
+                ev.add("카카오맵 '" + keyword + "' 검색 상위 15곳에 없어요");
+            }
+        } else if (kk.note() != null) {
+            ev.add(kk.note());
+        }
+
         long mentions = estimatedMentions(blogSim, name);
-        int blogPts = mentions == 0 ? 0 : mentions < 10 ? 3 : mentions < 50 ? 6 : mentions < 200 ? 8 : 10;
+        int blogPts = mentions == 0 ? 0 : mentions < 10 ? 2 : mentions < 50 ? 5 : mentions < 200 ? 7 : 8;
         ev.add("블로그 언급 약 " + mentions + "건");
 
-        return new Axis("exposure", "찾기 쉬움", "손님이 찾기 쉬운 정도", "노출", mapPts + blogPts, 20, true, ev);
+        return new Axis("exposure", "찾기 쉬움", "손님이 찾기 쉬운 정도", "노출(SEO)", mapPts + kakaoPts + blogPts, max, true, ev);
+    }
+
+    /** 블로그 글이 메뉴·분위기 등을 설명하는지 — AI가 가게를 소개할 때 쓰는 재료 */
+    private static final List<String> DESCRIPTIVE = List.of(
+            "메뉴", "시그니처", "가격", "분위기", "인테리어", "좌석", "주차", "예약", "웨이팅",
+            "디저트", "커피", "음료", "브런치", "추천", "영업시간", "콘센트", "반려", "단체");
+
+    /**
+     * AI가 찾기 쉬움 (10) — AI 노출 준비도(AEO). AI 검색이 가게를 소개할 때 참고하는 신호를 규칙으로 점수화.
+     * (AI가 실제로 추천하는지는 답이 매번 달라 점수에 넣지 않고 "AI 언급률" 참고 지표로 따로 봄)
+     *  - 네이버·카카오 정보 일치 3 (카카오 확인 못 하면 제외)
+     *  - 홈페이지·SNS 링크 2
+     *  - 방문자 리뷰 2 (사장님이 입력 안 하면 제외)
+     *  - 블로그 글의 설명 풍부함 3
+     */
+    private Axis aiReadiness(LocalItem place, KakaoLookup kk, Integer reviews, BlogResponse blogSim, String name) {
+        if (place == null) {
+            return new Axis("aeo", "AI가 찾기 쉬움", "AI가 우리 가게를 소개하기 쉬운 정도", "AI 노출 준비도(AEO)",
+                    0, 10, false, List.of("네이버에서 가게를 찾지 못해 확인하지 못했어요"));
+        }
+        List<String> ev = new ArrayList<>();
+        int pts = 0, max = 0;
+
+        if (kk.measured()) {
+            max += 3;
+            if (kk.place() == null) {
+                ev.add("카카오맵에서 가게를 찾지 못했어요 — 등록하면 AI가 참고할 곳이 늘어요");
+            } else if (sameAddress(place, kk.place())) {
+                pts += 3;
+                ev.add("네이버·카카오맵 주소가 같아요");
+            } else {
+                pts += 1;
+                ev.add("네이버·카카오맵 주소가 서로 달라요 — 한쪽을 고치면 AI가 헷갈리지 않아요");
+            }
+        } else if (kk.note() != null) {
+            ev.add(kk.note());
+        }
+
+        max += 2;
+        boolean home = place.link() != null && !place.link().isBlank();
+        if (home) pts += 2;
+        ev.add("홈페이지·SNS 링크 " + (home ? "있음" : "없음"));
+
+        if (reviews != null) {
+            max += 2;
+            pts += reviews >= 50 ? 2 : reviews >= 10 ? 1 : 0;
+            ev.add("방문자 리뷰 " + reviews + "개");
+        }
+
+        max += 3;
+        List<BlogItem> relevant = blogSim.items().stream().filter(b -> mentions(b, name)).toList();
+        if (relevant.isEmpty()) {
+            ev.add("가게 이름이 들어간 블로그 글이 없어요");
+        } else {
+            long rich = relevant.stream().filter(b -> {
+                String t = NaverSearchClient.clean(b.title()) + " " + NaverSearchClient.clean(b.description());
+                return DESCRIPTIVE.stream().filter(t::contains).count() >= 2;
+            }).count();
+            double ratio = (double) rich / relevant.size();
+            pts += ratio >= 0.5 ? 3 : ratio >= 0.2 ? 2 : rich > 0 ? 1 : 0;
+            ev.add("블로그 글 " + relevant.size() + "개 중 메뉴·분위기 등을 설명한 글 " + rich + "개 (" + Math.round(ratio * 100) + "%)");
+        }
+
+        return new Axis("aeo", "AI가 찾기 쉬움", "AI가 우리 가게를 소개하기 쉬운 정도", "AI 노출 준비도(AEO)",
+                pts, max, true, ev);
+    }
+
+    /**
+     * 네이버·카카오 주소가 같은 곳인지 — 도로명은 "OO로 123", 지번은 "OO동 123-4"처럼 끝 두 토큰으로 비교
+     * ("경기도"/"경기" 같은 표기 차이는 무시)
+     */
+    static boolean sameAddress(LocalItem n, KakaoPlace k) {
+        String nr = tail(n.roadAddress()), kr = tail(k.roadAddressName());
+        if (!nr.isEmpty() && nr.equals(kr)) return true;
+        String nj = tail(n.address()), kj = tail(k.addressName());
+        return !nj.isEmpty() && nj.equals(kj);
+    }
+
+    private static String tail(String addr) {
+        if (addr == null) return "";
+        String[] t = addr.replaceAll("\\(.*?\\)", " ").trim().split("\\s+");
+        return t.length < 2 ? "" : (t[t.length - 2] + t[t.length - 1]);
     }
 
     /** 믿음직함 (20) — 리뷰 공식 API 없음 → 사장님 입력 리뷰 수. 미입력이면 측정 제외 */

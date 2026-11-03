@@ -29,6 +29,7 @@ public class OwnerService {
     private final RewardGrantRepository rewardGrantRepository;
     private final CustomerDataService customerDataService;
     private final AtRiskService atRiskService;
+    private final kr.ac.ajou.shima.ai.AiMentionService aiMentionService;
     private final QrTokenService qrTokenService;
     private final StatsService statsService;
     private final DiagnosisService diagnosisService;
@@ -37,7 +38,8 @@ public class OwnerService {
                         VisitLogRepository visitLogRepository, RewardGrantRepository rewardGrantRepository,
                         QrTokenService qrTokenService, StatsService statsService,
                         DiagnosisService diagnosisService, CustomerDataService customerDataService,
-                        AtRiskService atRiskService) {
+                        AtRiskService atRiskService, kr.ac.ajou.shima.ai.AiMentionService aiMentionService) {
+        this.aiMentionService = aiMentionService;
         this.atRiskService = atRiskService;
         this.customerDataService = customerDataService;
         this.statsService = statsService;
@@ -52,6 +54,15 @@ public class OwnerService {
     /** 온라인 진단 실행 (네이버 검색 API 4회 호출) */
     public DiagnosisResponse runDiagnosis(DiagnosisRequest req) {
         return diagnosisService.run(currentStore(), req);
+    }
+
+    /** AI 언급률 확인 (참고 지표, 수십 초 걸림) */
+    public kr.ac.ajou.shima.dto.AiMentionResponse checkAiMentions() {
+        return aiMentionService.check(currentStore());
+    }
+
+    public Optional<kr.ac.ajou.shima.dto.AiMentionResponse> latestAiMentions() {
+        return aiMentionService.latest(currentStore());
     }
 
     /** 가장 최근 진단 결과 */

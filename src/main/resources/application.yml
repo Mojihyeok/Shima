@@ -21,6 +21,13 @@ shima:
     # 네이버 검색 API (네이버 클라우드 플랫폼 NAVER API HUB의 Client ID/Secret) — 키는 환경변수로만. 비어 있으면 진단 기능만 꺼짐
     client-id: ${NAVER_CLIENT_ID:}
     client-secret: ${NAVER_CLIENT_SECRET:}
+  kakao:
+    # 카카오 로컬 API (developers.kakao.com REST API 키) — 비어 있으면 진단에서 카카오맵 항목만 빠짐
+    rest-api-key: ${KAKAO_REST_API_KEY:}
+  ai:
+    # Claude API — AI 언급률 확인(진단 참고 지표)·AI 처방(F3). 비어 있으면 해당 기능만 꺼짐
+    api-key: ${ANTHROPIC_API_KEY:}
+    model: ${SHIMA_AI_MODEL:claude-sonnet-5-5}
   # CORS 허용 오리진 (dev: localhost + 사설망 IP — 폰/태블릿 테스트용)
   cors-origin-patterns: ${SHIMA_CORS:http://localhost:[*],http://127.0.0.1:[*],http://192.168.*.*:[*],http://10.*.*.*:[*],http://172.*.*.*:[*]}
 
