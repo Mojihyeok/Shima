@@ -12,8 +12,12 @@ public record DiagnosisResponse(
         String placeAddress,
         String searchKeyword,       // 노출 순위를 본 검색어 (예: "매탄동 카페")
         List<Axis> axes,
-        Integer previousScore       // 직전 진단 점수 (없으면 null)
+        Integer previousScore,      // 직전 진단 점수 (없으면 null)
+        List<Peer> peers            // 같은 검색어 상위 가게와 비교 (우리 가게 포함, self=true). 예전 진단은 null
 ) {
+    /** 비교 대상 가게 — 블로그 언급량(추정)·최근 30일 새 글 */
+    public record Peer(String name, long blogMentions, int recentPosts30, boolean self) {}
+
     public record Axis(
             String key,             // exposure | reputation | activity | completeness | revisit
             String name,            // PRD 축 이름: 찾기 쉬움 …

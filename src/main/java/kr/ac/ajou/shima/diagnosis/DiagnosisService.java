@@ -12,6 +12,7 @@ import kr.ac.ajou.shima.domain.VisitLog;
 import kr.ac.ajou.shima.dto.DiagnosisRequest;
 import kr.ac.ajou.shima.dto.DiagnosisResponse;
 import kr.ac.ajou.shima.dto.DiagnosisResponse.Axis;
+import kr.ac.ajou.shima.dto.DiagnosisResponse.Peer;
 import kr.ac.ajou.shima.repository.DiagnosisResultRepository;
 import kr.ac.ajou.shima.repository.VisitLogRepository;
 import kr.ac.ajou.shima.service.StatsService;
@@ -30,10 +31,14 @@ import java.util.regex.Pattern;
  * 쉬마 브랜드 지수 (F1 수집 + F2 점수). 점수는 전부 결정론적 규칙 — LLM 사용 안 함(재현성·설명 가능성).
  * 측정 못 한 축은 0점이 아니라 "제외"하고, 측정된 축 만점 기준으로 100점 환산한다.
  *
- * 외부 호출: 네이버 지역 2 + 블로그 2, 카카오 키워드 2 = 진단 1회당 6회 (카카오는 실패해도 해당 항목만 제외)
+ * 외부 호출: 네이버 지역 2 + 블로그 1 + 경쟁 가게 블로그 최대 4, 카카오 키워드 2 (카카오는 실패해도 해당 항목만 제외)
  *
  * 축(만점): 찾기 쉬움 20(네이버 지도 8 + 카카오맵 4 + 블로그 8) · AI가 찾기 쉬움 10 · 믿음직함 20 · 살아있음 15
  *           · 빠짐없음 15 · 다시 옴 30
+ *
+ * 상대 평가: 블로그 언급량(찾기 쉬움)·최근 활동(살아있음)은 "동네+업종" 검색 상위 가게(경쟁 가게)의
+ *           중앙값과 비교해 점수를 매긴다 (경쟁 가게를 못 구하면 절대 기준으로 대체).
+ *           리뷰 수는 공개 API가 없어 경쟁 가게 값을 얻을 수 없으므로 절대 기준 유지.
  */
 @Service
 public class DiagnosisService {
@@ -72,18 +77,31 @@ public class DiagnosisService {
         String categoryKw = place == null ? null : categoryKeyword(place.category());
         String keyword = categoryKw == null ? null : (dong + " " + categoryKw).trim();
 
-        // ---- 2) 블로그: 정확도순 100건(언급량 보정) + 최신순 100건(최근 활동) ----
-        String blogQuery = (name + " " + (dong.isBlank() ? region : dong)).trim();
-        BlogResponse blogSim = naver.blog(blogQuery, "sim");
-        BlogResponse blogDate = naver.blog(blogQuery, "date");
+        // ---- 2) 블로그 최신순 100건 — 언급량(전체 건수 × 관련 글 비율)·최근 활동 모두 여기서 ----
+        String area = dong.isBlank() ? region : dong;
+        BlogResponse blogDate = naver.blog((name + " " + area).trim(), "date");
+
+        // ---- 3) 경쟁 가게: "동네+업종" 지도 검색 상위 5곳 중 우리 가게 제외 → 같은 방식으로 블로그 측정 ----
+        List<LocalItem> top = keyword == null ? List.of() : naver.local(keyword);
+        List<Peer> peers = new ArrayList<>();
+        Peer self = new Peer(NaverSearchClient.clean(place == null ? name : place.title()),
+                estimatedMentions(blogDate, name), recentCount(blogDate, name, 30), true);
+        peers.add(self);
+        for (LocalItem it : top) {
+            if (sameName(it.title(), name)) continue;
+            String pn = NaverSearchClient.clean(it.title());
+            BlogResponse pb = naver.blog((pn + " " + area).trim(), "date");
+            peers.add(new Peer(pn, estimatedMentions(pb, pn), recentCount(pb, pn, 30), false));
+        }
+        List<Peer> others = peers.stream().filter(x -> !x.self()).toList();
 
         KakaoLookup kk = kakaoLookup(region, name, keyword);
 
         List<Axis> axes = new ArrayList<>();
-        axes.add(exposure(place, name, keyword, blogSim, kk));
-        axes.add(aiReadiness(place, kk, reviewCount, blogSim, name));
+        axes.add(exposure(place, name, keyword, top, self, others, kk));
+        axes.add(aiReadiness(place, kk, reviewCount, blogDate, name));
         axes.add(reputation(reviewCount));
-        axes.add(activity(blogDate, name));
+        axes.add(activity(blogDate, name, self, others));
         axes.add(completeness(place));
         axes.add(revisit(store));
 
@@ -97,7 +115,7 @@ public class DiagnosisService {
         DiagnosisResponse res = new DiagnosisResponse(Instant.now(), total, max,
                 place == null ? null : NaverSearchClient.clean(place.title()),
                 place == null ? null : blankTo(place.roadAddress(), place.address()),
-                keyword, axes, previous);
+                keyword, axes, previous, peers);
 
         resultRepo.save(new DiagnosisResult(store, total, toJson(res)));
         return res;
@@ -135,14 +153,14 @@ public class DiagnosisService {
     // ======================= 축별 규칙 =======================
 
     /** 찾기 쉬움 (20) = 네이버 지도 순위(8) + 카카오맵 순위(4, 확인 못 하면 제외) + 블로그 언급량(8) */
-    private Axis exposure(LocalItem place, String name, String keyword, BlogResponse blogSim, KakaoLookup kk) {
+    private Axis exposure(LocalItem place, String name, String keyword, List<LocalItem> top,
+                          Peer self, List<Peer> others, KakaoLookup kk) {
         List<String> ev = new ArrayList<>();
         int max = 16;
         int mapPts = 0;
         if (place == null) {
             ev.add("네이버 지도 검색에서 가게를 찾지 못했어요 (상호명·지역을 확인해 주세요)");
         } else if (keyword != null) {
-            List<LocalItem> top = naver.local(keyword);
             int rank = -1;
             for (int i = 0; i < top.size(); i++) {
                 if (sameName(top.get(i).title(), name)) { rank = i + 1; break; }
@@ -168,9 +186,17 @@ public class DiagnosisService {
             ev.add(kk.note());
         }
 
-        long mentions = estimatedMentions(blogSim, name);
-        int blogPts = mentions == 0 ? 0 : mentions < 10 ? 2 : mentions < 50 ? 5 : mentions < 200 ? 7 : 8;
-        ev.add("블로그 언급 약 " + mentions + "건");
+        long mentions = self.blogMentions();
+        int blogPts;
+        if (others.isEmpty()) { // 경쟁 가게를 못 구하면 절대 기준
+            blogPts = mentions == 0 ? 0 : mentions < 10 ? 2 : mentions < 50 ? 5 : mentions < 200 ? 7 : 8;
+            ev.add("블로그 언급 약 " + mentions + "건");
+        } else {
+            double med = median(others.stream().mapToDouble(Peer::blogMentions).toArray());
+            blogPts = relative(mentions, med, 8, 6, 4, 2);
+            ev.add("블로그 언급 약 " + mentions + "건 · 주변 " + others.size() + "곳 중앙값 약 " + Math.round(med) + "건"
+                    + ratioText(mentions, med));
+        }
 
         return new Axis("exposure", "찾기 쉬움", "손님이 찾기 쉬운 정도", "노출(SEO)", mapPts + kakaoPts + blogPts, max, true, ev);
     }
@@ -188,7 +214,7 @@ public class DiagnosisService {
      *  - 방문자 리뷰 2 (사장님이 입력 안 하면 제외)
      *  - 블로그 글의 설명 풍부함 3
      */
-    private Axis aiReadiness(LocalItem place, KakaoLookup kk, Integer reviews, BlogResponse blogSim, String name) {
+    private Axis aiReadiness(LocalItem place, KakaoLookup kk, Integer reviews, BlogResponse blog, String name) {
         if (place == null) {
             return new Axis("aeo", "AI가 찾기 쉬움", "AI가 우리 가게를 소개하기 쉬운 정도", "AI 노출 준비도(AEO)",
                     0, 10, false, List.of("네이버에서 가게를 찾지 못해 확인하지 못했어요"));
@@ -223,7 +249,7 @@ public class DiagnosisService {
         }
 
         max += 3;
-        List<BlogItem> relevant = blogSim.items().stream().filter(b -> mentions(b, name)).toList();
+        List<BlogItem> relevant = blog.items().stream().filter(b -> mentions(b, name)).toList();
         if (relevant.isEmpty()) {
             ev.add("가게 이름이 들어간 블로그 글이 없어요");
         } else {
@@ -274,7 +300,7 @@ public class DiagnosisService {
     }
 
     /** 살아있음 (15) — 최근 블로그 새 글 (상호명이 실제로 들어간 글만) */
-    private Axis activity(BlogResponse blogDate, String name) {
+    private Axis activity(BlogResponse blogDate, String name, Peer self, List<Peer> others) {
         LocalDate today = LocalDate.now(StatsService.KST);
         int d30 = 0, d90 = 0;
         for (BlogItem b : blogDate.items()) {
@@ -284,9 +310,22 @@ public class DiagnosisService {
             if (!d.isBefore(today.minusDays(30))) d30++;
             if (!d.isBefore(today.minusDays(90))) d90++;
         }
-        int pts = d30 >= 5 ? 15 : d30 >= 2 ? 10 : d30 == 1 ? 6 : d90 >= 1 ? 3 : 0;
-        return new Axis("activity", "살아있음", "가게 소식이 살아있는 정도", "활성도", pts, 15, true,
-                List.of("최근 한 달 블로그 새 글 " + d30 + "개", "최근 3달 " + d90 + "개"));
+        List<String> ev = new ArrayList<>();
+        int pts;
+        if (others.isEmpty()) { // 절대 기준
+            pts = d30 >= 5 ? 15 : d30 >= 2 ? 10 : d30 == 1 ? 6 : d90 >= 1 ? 3 : 0;
+            ev.add("최근 한 달 블로그 새 글 " + d30 + "개");
+        } else if (d30 == 0) {
+            pts = d90 >= 1 ? 2 : 0;
+            ev.add("최근 한 달 블로그 새 글이 없어요");
+        } else {
+            double med = median(others.stream().mapToDouble(Peer::recentPosts30).toArray());
+            pts = relative(d30, med, 15, 11, 7, 3);
+            ev.add("최근 한 달 블로그 새 글 " + d30 + "개 · 주변 " + others.size() + "곳 중앙값 " + Math.round(med) + "개"
+                    + ratioText(d30, med));
+        }
+        ev.add("최근 3달 " + d90 + "개");
+        return new Axis("activity", "살아있음", "가게 소식이 살아있는 정도", "활성도", pts, 15, true, ev);
     }
 
     /** 빠짐없음 (15) — 검색 API로 확인 가능한 항목만: 주소·업종 분류·홈페이지 (각 5점) */
@@ -334,6 +373,42 @@ public class DiagnosisService {
     }
 
     // ======================= 도우미 =======================
+
+    /**
+     * 상대 점수 — 우리 값 ÷ 경쟁 가게 중앙값: 1.5배↑ top / 1배↑ good / 0.5배↑ mid / 그 밖 low, 0이면 0점.
+     * 경쟁 가게 중앙값이 0이면(아무도 활동 없음) 우리가 조금이라도 있으면 top.
+     */
+    static int relative(double mine, double peerMedian, int top, int good, int mid, int low) {
+        if (mine <= 0) return 0;
+        if (peerMedian <= 0) return top;
+        double r = mine / peerMedian;
+        return r >= 1.5 ? top : r >= 1.0 ? good : r >= 0.5 ? mid : low;
+    }
+
+    private static String ratioText(double mine, double med) {
+        if (med <= 0) return mine > 0 ? " (주변보다 많아요)" : "";
+        return String.format(" (%.1f배)", mine / med);
+    }
+
+    static double median(double[] v) {
+        if (v.length == 0) return 0;
+        double[] s = v.clone();
+        java.util.Arrays.sort(s);
+        int m = s.length / 2;
+        return s.length % 2 == 1 ? s[m] : (s[m - 1] + s[m]) / 2.0;
+    }
+
+    /** 최근 n일 안에 올라온, 상호명이 들어간 글 수 (최신순 100건 안에서) */
+    private static int recentCount(BlogResponse r, String name, int days) {
+        LocalDate from = LocalDate.now(StatsService.KST).minusDays(days);
+        int c = 0;
+        for (BlogItem b : r.items()) {
+            if (!mentions(b, name)) continue;
+            LocalDate d = parsePostdate(b.postdate());
+            if (d != null && !d.isBefore(from)) c++;
+        }
+        return c;
+    }
 
     /**
      * 검색 결과 이름과 상호명이 같은 가게인지 (공백·태그 무시).
