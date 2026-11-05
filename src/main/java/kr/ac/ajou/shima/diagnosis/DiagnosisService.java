@@ -240,21 +240,26 @@ public class DiagnosisService {
                 pts, max, true, ev);
     }
 
+    /** 도로명 "OO로 12", "OO로47번길 12" (뒤에 붙는 "1층" 등은 무시) */
+    private static final Pattern ROAD = Pattern.compile("([가-힣A-Za-z0-9]+(?:로|길))\\s*(\\d+(?:-\\d+)?)");
+    /** 지번 "OO동 123-4" */
+    private static final Pattern JIBUN = Pattern.compile("([가-힣0-9]+(?:동|리|가))\\s+(산?\\d+(?:-\\d+)?)");
+
     /**
-     * 네이버·카카오 주소가 같은 곳인지 — 도로명은 "OO로 123", 지번은 "OO동 123-4"처럼 끝 두 토큰으로 비교
-     * ("경기도"/"경기" 같은 표기 차이는 무시)
+     * 네이버·카카오 주소가 같은 곳인지 — 도로명(도로+건물번호) 또는 지번(동+번지)으로 비교.
+     * "경기도"/"경기" 표기 차이, 층·호수("1층") 유무는 무시.
      */
     static boolean sameAddress(LocalItem n, KakaoPlace k) {
-        String nr = tail(n.roadAddress()), kr = tail(k.roadAddressName());
-        if (!nr.isEmpty() && nr.equals(kr)) return true;
-        String nj = tail(n.address()), kj = tail(k.addressName());
-        return !nj.isEmpty() && nj.equals(kj);
+        String nr = key(ROAD, n.roadAddress()), kr = key(ROAD, k.roadAddressName());
+        if (nr != null && nr.equals(kr)) return true;
+        String nj = key(JIBUN, n.address()), kj = key(JIBUN, k.addressName());
+        return nj != null && nj.equals(kj);
     }
 
-    private static String tail(String addr) {
-        if (addr == null) return "";
-        String[] t = addr.replaceAll("\\(.*?\\)", " ").trim().split("\\s+");
-        return t.length < 2 ? "" : (t[t.length - 2] + t[t.length - 1]);
+    private static String key(Pattern p, String addr) {
+        if (addr == null) return null;
+        Matcher m = p.matcher(addr);
+        return m.find() ? m.group(1) + " " + m.group(2) : null;
     }
 
     /** 믿음직함 (20) — 리뷰 공식 API 없음 → 사장님 입력 리뷰 수. 미입력이면 측정 제외 */
