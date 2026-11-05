@@ -2,6 +2,8 @@ package kr.ac.ajou.shima.diagnosis;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -17,6 +19,8 @@ import java.util.List;
  */
 @Component
 public class KakaoLocalClient {
+
+    private static final Logger log = LoggerFactory.getLogger(KakaoLocalClient.class);
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record KakaoPlace(
@@ -54,8 +58,10 @@ public class KakaoLocalClient {
                     .retrieve().body(KeywordResponse.class);
             return r == null || r.documents() == null ? List.of() : r.documents();
         } catch (RestClientResponseException e) {
+            log.warn(">> [kakao] HTTP {} body={}", e.getStatusCode().value(), e.getResponseBodyAsString());
             throw new ExternalApiException("카카오 로컬 API 오류 (" + e.getStatusCode().value() + ")", true);
         } catch (RestClientException e) {
+            log.warn(">> [kakao] 호출 실패: {}", e.toString(), e);
             throw new ExternalApiException("카카오 로컬 API에 연결하지 못했어요.", true);
         }
     }

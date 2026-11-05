@@ -1,5 +1,7 @@
 package kr.ac.ajou.shima.diagnosis;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -20,6 +22,8 @@ import java.util.function.Supplier;
  */
 @Component
 public class NaverSearchClient {
+
+    private static final Logger log = LoggerFactory.getLogger(NaverSearchClient.class);
 
     public record LocalItem(String title, String link, String category, String description,
                             String telephone, String address, String roadAddress, String mapx, String mapy) {}
@@ -70,8 +74,11 @@ public class NaverSearchClient {
         try {
             return s.get();
         } catch (RestClientResponseException e) {
+            log.warn(">> [naver] HTTP {} body={}", e.getStatusCode().value(), e.getResponseBodyAsString());
             throw new ExternalApiException("네이버 검색 API 오류 (" + e.getStatusCode().value() + ")", true);
         } catch (RestClientException e) {
+            // 연결 실패뿐 아니라 응답 변환 실패도 여기로 옴 → 원인 확인용 로그 (키는 찍지 않음)
+            log.warn(">> [naver] 호출 실패: {}", e.toString(), e);
             throw new ExternalApiException("네이버 검색 API에 연결하지 못했어요.", true);
         }
     }

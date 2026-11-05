@@ -2,6 +2,8 @@ package kr.ac.ajou.shima.ai;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import kr.ac.ajou.shima.diagnosis.ExternalApiException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
@@ -21,6 +23,8 @@ import java.util.Map;
  */
 @Component
 public class ClaudeClient {
+
+    private static final Logger log = LoggerFactory.getLogger(ClaudeClient.class);
 
     /** 웹 검색 도구 기본 버전 — 직접 호출(allowed_callers 기본 direct) */
     public static final String WEB_SEARCH_TOOL = "web_search_20250305";
@@ -95,8 +99,10 @@ public class ClaudeClient {
             if (r == null) throw new ExternalApiException("Claude API 응답이 비었어요.", true);
             return r;
         } catch (RestClientResponseException e) {
+            log.warn(">> [claude] HTTP {} body={}", e.getStatusCode().value(), e.getResponseBodyAsString());
             throw new ExternalApiException("Claude API 오류 (" + e.getStatusCode().value() + ")", true);
         } catch (RestClientException e) {
+            log.warn(">> [claude] 호출 실패: {}", e.toString(), e);
             throw new ExternalApiException("Claude API에 연결하지 못했어요.", true);
         }
     }
