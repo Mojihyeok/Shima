@@ -85,15 +85,17 @@ public class DiagnosisService {
         List<LocalItem> top = keyword == null ? List.of() : naver.local(keyword);
         List<Peer> peers = new ArrayList<>();
         Peer self = new Peer(NaverSearchClient.clean(place == null ? name : place.title()),
-                estimatedMentions(blogDate, name), recentCount(blogDate, name, 30), true);
+                estimatedMentions(blogDate, name), recentCount(blogDate, name, 30), true, true);
         peers.add(self);
         for (LocalItem it : top) {
             if (sameName(it.title(), name)) continue;
             String pn = NaverSearchClient.clean(it.title());
-            BlogResponse pb = naver.blog((pn + " " + area).trim(), "date");
-            peers.add(new Peer(pn, estimatedMentions(pb, pn), recentCount(pb, pn, 30), false));
+            BlogResponse pb = naver.blog(peerQuery(pn, area), "date");
+            long pm = estimatedMentions(pb, pn);
+            // 0건이면 실제로 글이 없다기보다 이름 매칭 실패일 가능성이 커서 중앙값에서 제외 (표에는 표시)
+            peers.add(new Peer(pn, pm, recentCount(pb, pn, 30), false, pm > 0));
         }
-        List<Peer> others = peers.stream().filter(x -> !x.self()).toList();
+        List<Peer> others = peers.stream().filter(x -> !x.self() && x.counted()).toList();
 
         KakaoLookup kk = kakaoLookup(region, name, keyword);
 
@@ -421,9 +423,50 @@ public class DiagnosisService {
         return !a.isEmpty() && !b.isEmpty() && (a.contains(b) || (a.length() >= 2 && b.startsWith(a)));
     }
 
+    /** 지점명 앞의 지역 접두어 ("수원아주대점" → "아주대점") */
+    private static final Pattern BRANCH_REGION = Pattern.compile(
+            "^(서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주|수원|성남|용인|고양|화성|안양|부천)");
+
+    /**
+     * 블로그에서 가게 이름을 찾을 때 쓰는 표기들 (정규화된 문자열).
+     * 체인 지점 "차백도 수원아주대점" → "차백도수원아주대점", "차백도아주대점", "차백도아주대"
+     * (브랜드 이름만으로는 찾지 않음 — 다른 지점 글까지 섞이므로)
+     */
+    static List<String> nameVariants(String name) {
+        String clean = NaverSearchClient.clean(name);
+        java.util.LinkedHashSet<String> v = new java.util.LinkedHashSet<>();
+        v.add(NaverSearchClient.norm(clean));
+        String[] t = clean.split("\\s+");
+        if (t.length >= 2 && t[t.length - 1].endsWith("점")) {
+            String brand = String.join("", java.util.Arrays.copyOf(t, t.length - 1));
+            String branch = BRANCH_REGION.matcher(t[t.length - 1]).replaceFirst("");
+            if (branch.length() >= 2) {
+                v.add(NaverSearchClient.norm(brand + branch));
+                String core = branch.substring(0, branch.length() - 1);
+                if (core.length() >= 2) v.add(NaverSearchClient.norm(brand + core));
+            }
+        }
+        v.removeIf(String::isEmpty);
+        return new ArrayList<>(v);
+    }
+
+    /** 경쟁 가게 블로그 검색어 — 체인 지점은 "브랜드 지점"(동네 생략), 그 밖은 "가게명 동네" */
+    static String peerQuery(String name, String area) {
+        String[] t = name.trim().split("\\s+");
+        if (t.length >= 2 && t[t.length - 1].endsWith("점")) {
+            String branch = BRANCH_REGION.matcher(t[t.length - 1]).replaceFirst("");
+            String brand = String.join(" ", java.util.Arrays.copyOf(t, t.length - 1));
+            return (brand + " " + (branch.length() >= 2 ? branch : t[t.length - 1])).trim();
+        }
+        return (name + " " + area).trim();
+    }
+
     private static boolean mentions(BlogItem b, String name) {
-        String n = NaverSearchClient.norm(name);
-        return NaverSearchClient.norm(b.title()).contains(n) || NaverSearchClient.norm(b.description()).contains(n);
+        String title = NaverSearchClient.norm(b.title()), desc = NaverSearchClient.norm(b.description());
+        for (String n : nameVariants(name)) {
+            if (title.contains(n) || desc.contains(n)) return true;
+        }
+        return false;
     }
 
     /** 블로그 전체 건수 × (정확도순 상위 결과 중 상호명이 실제로 들어간 비율) — 동명이·무관 글 보정 */

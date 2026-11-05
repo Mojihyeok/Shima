@@ -15,8 +15,11 @@ public record DiagnosisResponse(
         Integer previousScore,      // 직전 진단 점수 (없으면 null)
         List<Peer> peers            // 같은 검색어 상위 가게와 비교 (우리 가게 포함, self=true). 예전 진단은 null
 ) {
-    /** 비교 대상 가게 — 블로그 언급량(추정)·최근 30일 새 글 */
-    public record Peer(String name, long blogMentions, int recentPosts30, boolean self) {}
+    /**
+     * 비교 대상 가게 — 블로그 언급량(추정)·최근 30일 새 글.
+     * counted=false: 블로그에서 이름을 못 찾아(측정 실패 가능성) 중앙값 계산에서 뺀 가게
+     */
+    public record Peer(String name, long blogMentions, int recentPosts30, boolean self, boolean counted) {}
 
     public record Axis(
             String key,             // exposure | reputation | activity | completeness | revisit
