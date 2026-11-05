@@ -1,5 +1,7 @@
 package kr.ac.ajou.shima.diagnosis;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -19,6 +21,7 @@ import java.util.function.Supplier;
  *  - 블로그: display 최대 100, sort=sim(정확도)|date(최신), postdate=yyyyMMdd
  *  - 호출 한도는 NAVER API HUB 정책을 따름 (초과 시 429)
  * 크롤링은 하지 않는다 (ToS). 공식 API로 얻을 수 있는 것만 사용.
+ *  ※ API HUB는 JSON 본문을 Content-Type text/plain으로 보냄 → 문자열로 받아 직접 JSON 변환
  */
 @Component
 public class NaverSearchClient {
@@ -34,14 +37,18 @@ public class NaverSearchClient {
 
     private final RestClient http;
     private final boolean configured;
+    private final ObjectMapper objectMapper;
 
     public NaverSearchClient(@Value("${shima.naver.client-id:}") String clientId,
-                             @Value("${shima.naver.client-secret:}") String clientSecret) {
+                             @Value("${shima.naver.client-secret:}") String clientSecret,
+                             ObjectMapper objectMapper) {
         this.configured = !clientId.isBlank() && !clientSecret.isBlank();
+        this.objectMapper = objectMapper;
         this.http = RestClient.builder()
                 .baseUrl("https://naverapihub.apigw.ntruss.com")
                 .defaultHeader("X-NCP-APIGW-API-KEY-ID", clientId)
                 .defaultHeader("X-NCP-APIGW-API-KEY", clientSecret)
+                .defaultHeader("Accept", "application/json")
                 .build();
     }
 
@@ -49,22 +56,34 @@ public class NaverSearchClient {
 
     /** 지역 검색 상위 5곳 (정확도순) */
     public List<LocalItem> local(String query) {
-        LocalResponse r = call(() -> http.get()
+        LocalResponse r = parse(call(() -> http.get()
                 .uri(u -> u.path("/search/v1/local")
                         .queryParam("query", "{q}").queryParam("display", 5).queryParam("sort", "random")
                         .build(query)) // 값은 URI 변수로 넘겨 &, + 같은 문자도 안전하게 인코딩
-                .retrieve().body(LocalResponse.class));
+                .retrieve().body(String.class)), LocalResponse.class);
         return r == null || r.items() == null ? List.of() : r.items();
     }
 
     /** 블로그 검색 최대 100건. sort = "sim" | "date" */
     public BlogResponse blog(String query, String sort) {
-        BlogResponse r = call(() -> http.get()
+        BlogResponse r = parse(call(() -> http.get()
                 .uri(u -> u.path("/search/v1/blog")
                         .queryParam("query", "{q}").queryParam("display", 100).queryParam("sort", "{s}")
                         .build(query, sort))
-                .retrieve().body(BlogResponse.class));
+                .retrieve().body(String.class)), BlogResponse.class);
         return r == null ? new BlogResponse(0, List.of()) : (r.items() == null ? new BlogResponse(r.total(), List.of()) : r);
+    }
+
+    /** 문자열 응답 → JSON 변환 (Content-Type과 무관하게) */
+    private <T> T parse(String body, Class<T> type) {
+        if (body == null || body.isBlank()) return null;
+        try {
+            return objectMapper.readValue(body, type);
+        } catch (JsonProcessingException e) {
+            log.warn(">> [naver] 응답 JSON 변환 실패: {} / 앞부분={}", e.getOriginalMessage(),
+                    body.substring(0, Math.min(200, body.length())));
+            throw new ExternalApiException("네이버 검색 API 응답을 읽지 못했어요.", true);
+        }
     }
 
     private <T> T call(Supplier<T> s) {
