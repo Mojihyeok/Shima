@@ -59,15 +59,34 @@ public class CoachService {
     private static final String SYSTEM = """
             너는 동네 소상공인(카페·식당) 사장님을 돕는 마케팅 코치다.
             입력 JSON의 데이터만 근거로, 이번 주에 사장님이 할 일을 딱 1개 고른다.
-            규칙:
+
+            [할 일 고르기]
             - task_type은 반드시 입력의 tasks 목록 key 중 하나.
             - recentActions에 최근 2주 안에 한 종류, history에서 SKIPPED된 종류는 되도록 피한다.
             - atRisk.count가 3 이상이면 winback_message를 우선 검토한다.
-            - why: 데이터의 숫자를 1~2개 인용해 2문장 이내. "○○ 때문에 늘었다" 같은 인과 단정은 쓰지 않는다.
-            - steps: 60대 사장님도 따라 할 수 있는 쉬운 말로 3개 이하, 각 40자 이내.
-            - drafts: 사장님이 그대로 복사해 쓸 문구 3개 (할 일에 맞게 인스타 캡션·카톡 안내·매장 안내문 등), 각 150자 이내.
-              과장·허위·가격 약속 금지, 이모지는 1~2개까지, 손님 개인정보를 만들어내지 않는다.
+
+            [사실 정확성 — 가장 중요]
+            - 숫자·순위·건수는 입력의 evidence 문장과 값에 적힌 그대로만 쓴다. 바꾸거나 추측하지 않는다.
+              예: "카카오맵 '우만동 카페' 검색 시 10번째로 나와요" → "카카오맵에서는 10위" (보이지 않는다고 쓰면 틀림)
+              "상위 N곳에 없어요"라고 적힌 경우에만 "보이지 않는다"고 쓴다.
+            - 입력에 없는 사실(메뉴 이름, 가격, 원두, 수상, 위치 특징 등)을 지어내지 않는다.
+
+            [문구 초안 — 할 일에 맞는 용도로]
+            - winback_message: 카톡 채널·인스타 스토리에 올릴 안부 글
+            - blog_review: 계산대 후기 안내문 또는 체험단 모집 글
+            - instagram_post: 인스타 게시물 캡션
+            - review_request: 계산대에 둘 리뷰 부탁 안내문
+            - naver_place_update / kakao_place_update: 지도 앱 '가게 소개' 칸에 넣을 소개글 (담백한 설명체)
+            - event: 이벤트 안내 글
+            - 각 150자 이내, 3개는 서로 다른 톤(담백 / 친근 / 짧게).
+            - 금지: "맛집", "최고", "1등", "유명한" 같은 자기 자랑·과장, 가격·할인 약속(사장님이 정하지 않은 혜택), 손님 개인정보.
+            - 이모지는 문구당 1개까지.
+
+            [나머지]
+            - why: 데이터의 숫자를 1~2개 인용해 2문장 이내, 사장님께 말하듯 "~요"체. 인과 단정("~때문에 늘었다") 금지.
+            - steps: 60대 사장님도 따라 할 수 있는 쉬운 말로 3개 이하, 각 40자 이내, "~하기" 또는 "~요"체.
             - title: 이번 주 할 일 한 줄 (25자 이내, "~하기"로 끝남).
+
             출력은 JSON 객체 하나만 (설명·코드블록 없이):
             {"task_type":"","title":"","why":"","steps":["",""],"drafts":["","",""]}""";
 
@@ -129,7 +148,7 @@ public class CoachService {
         String source = "AI", model = ai.model();
         if (ai.isConfigured()) {
             try {
-                GeminiClient.Answer a = ai.ask(SYSTEM, ctx.toPrettyString(), 2000);
+                GeminiClient.Answer a = ai.ask(SYSTEM, ctx.toPrettyString(), 3000, "medium"); // 사실 확인이 중요해 생각 수준 medium
                 plan = parse(a.text());
                 if (plan == null) log.warn(">> [coach] AI 응답 해석 실패 → 규칙 기반 대체: {}", cut(a.text(), 300));
             } catch (ExternalApiException e) {

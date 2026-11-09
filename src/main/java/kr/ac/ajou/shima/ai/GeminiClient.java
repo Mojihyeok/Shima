@@ -61,12 +61,16 @@ public class GeminiClient {
         return generate(system, question, true, maxOutputTokens);
     }
 
-    /** 검색 없이 한 번의 질문 (AI 처방 등 — 우리가 넘긴 데이터만으로 답하게) */
-    public Answer ask(String system, String input, int maxOutputTokens) {
-        return generate(system, input, false, maxOutputTokens);
+    /** 검색 없이 한 번의 질문 (AI 처방 등 — 우리가 넘긴 데이터만으로 답하게). thinkingLevel: low | medium | high */
+    public Answer ask(String system, String input, int maxOutputTokens, String thinkingLevel) {
+        return generate(system, input, false, maxOutputTokens, thinkingLevel);
     }
 
     private Answer generate(String system, String input, boolean search, int maxOutputTokens) {
+        return generate(system, input, search, maxOutputTokens, "low");
+    }
+
+    private Answer generate(String system, String input, boolean search, int maxOutputTokens, String thinkingLevel) {
         if (!configured) throw new ExternalApiException("Gemini API 키가 설정되지 않았어요. (GEMINI_API_KEY)", false);
 
         Map<String, Object> body = new HashMap<>();
@@ -74,7 +78,7 @@ public class GeminiClient {
         body.put("system_instruction", system);
         body.put("input", input);
         if (search) body.put("tools", List.of(Map.of("type", "google_search")));
-        body.put("generation_config", Map.of("max_output_tokens", maxOutputTokens, "thinking_level", "low"));
+        body.put("generation_config", Map.of("max_output_tokens", maxOutputTokens, "thinking_level", thinkingLevel));
 
         JsonNode res = post(body);
 
