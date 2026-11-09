@@ -14,6 +14,8 @@ import org.springframework.format.annotation.DateTimeFormat;
 import kr.ac.ajou.shima.service.OwnerService;
 import kr.ac.ajou.shima.service.PocService;
 import kr.ac.ajou.shima.service.MarketingService;
+import kr.ac.ajou.shima.ai.CoachService;
+import kr.ac.ajou.shima.dto.CoachResponse;
 import kr.ac.ajou.shima.dto.MarketingActionRequest;
 import kr.ac.ajou.shima.dto.MarketingActionResponse;
 import kr.ac.ajou.shima.dto.DailyCountRequest;
@@ -34,13 +36,43 @@ public class OwnerController {
     private final kr.ac.ajou.shima.ratelimit.RateLimiter rateLimiter;
     private final PocService pocService;
     private final MarketingService marketingService;
+    private final CoachService coachService;
 
     public OwnerController(OwnerService ownerService, kr.ac.ajou.shima.ratelimit.RateLimiter rateLimiter,
-                           PocService pocService, MarketingService marketingService) {
+                           PocService pocService, MarketingService marketingService, CoachService coachService) {
+        this.coachService = coachService;
         this.ownerService = ownerService;
         this.rateLimiter = rateLimiter;
         this.pocService = pocService;
         this.marketingService = marketingService;
+    }
+
+    // ===== AI 처방 (F3) — 이번 주 할 일 =====
+
+    /** 가장 최근 추천 — 없으면 204 */
+    @GetMapping("/coach/current")
+    public ResponseEntity<CoachResponse> coachCurrent() {
+        return coachService.current().map(ResponseEntity::ok).orElse(ResponseEntity.noContent().build());
+    }
+
+    /** 새 추천 받기 (AI 실패 시 규칙 기반) — 하루 5번 */
+    @PostMapping("/coach")
+    public CoachResponse coachNew() {
+        rateLimiter.hit("coach:" + kr.ac.ajou.shima.auth.CurrentOwner.id(), 5, java.time.Duration.ofDays(1),
+                "새 추천은 하루 5번까지 받을 수 있어요.");
+        return coachService.generate();
+    }
+
+    /** 했어요 — {"chosenDraft": 0~2 | null} → 마케팅 기록 자동 추가 */
+    @PostMapping("/coach/{id}/done")
+    public CoachResponse coachDone(@PathVariable Long id, @RequestBody(required = false) Map<String, Integer> body) {
+        return coachService.done(id, body == null ? null : body.get("chosenDraft"));
+    }
+
+    /** 이번엔 건너뛸게요 — 다음 추천에서 같은 종류를 피함 */
+    @PostMapping("/coach/{id}/skip")
+    public CoachResponse coachSkip(@PathVariable Long id) {
+        return coachService.skip(id);
     }
 
     // ===== 마케팅 실행 기록 (그래프 오버레이) =====
