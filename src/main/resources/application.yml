@@ -25,9 +25,9 @@ shima:
     # 카카오 로컬 API (developers.kakao.com REST API 키) — 비어 있으면 진단에서 카카오맵 항목만 빠짐
     rest-api-key: ${KAKAO_REST_API_KEY:}
   ai:
-    # Claude API — AI 언급률 확인(진단 참고 지표)·AI 처방(F3). 비어 있으면 해당 기능만 꺼짐
-    api-key: ${ANTHROPIC_API_KEY:}
-    model: ${SHIMA_AI_MODEL:claude-sonnet-5-5}
+    # Google Gemini API — AI 언급률 확인(진단 참고 지표)·AI 처방(F3). 비어 있으면 해당 기능만 꺼짐
+    api-key: ${GEMINI_API_KEY:}
+    model: ${SHIMA_AI_MODEL:gemini-3.8-flash}
   # CORS 허용 오리진 (dev: localhost + 사설망 IP — 폰/태블릿 테스트용)
   cors-origin-patterns: ${SHIMA_CORS:http://localhost:[*],http://127.0.0.1:[*],http://192.168.*.*:[*],http://10.*.*.*:[*],http://172.*.*.*:[*]}
 

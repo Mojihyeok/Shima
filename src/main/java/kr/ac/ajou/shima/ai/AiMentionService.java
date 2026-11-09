@@ -19,11 +19,11 @@ import java.util.Optional;
 import java.util.concurrent.*;
 
 /**
- * AI 언급률 (AEO 실측, 참고 지표) — 웹 검색이 되는 AI에게 손님처럼 "동네 + 업종 추천"을 물어보고
+ * AI 언급률 (AEO 실측, 참고 지표) — 구글 검색이 되는 AI(Gemini)에게 손님처럼 "동네 + 업종 추천"을 물어보고
  * 답변에 우리 가게 이름이 나오는지 센다.
  *  - 같은 질문에도 답이 매번 달라서 쉬마 지수(규칙 점수)에는 넣지 않는다
- *  - 네이버 AI 브리핑은 공개 API가 없어 측정 불가 → 웹 검색 AI(Claude) 기준
- *  - 비용: 질문 3개 × (웹 검색 최대 2회 + 토큰) ≈ 회당 수백 원 → 사장님당 하루 3회 제한(컨트롤러)
+ *  - 네이버 AI 브리핑은 공개 API가 없어 측정 불가 → Gemini + 구글 검색 기준
+ *  - 비용: 질문 3개 × 토큰 (구글 검색은 월 5,000회까지 무료) → 사장님당 하루 3회 제한(컨트롤러)
  */
 @Service
 public class AiMentionService {
@@ -33,14 +33,14 @@ public class AiMentionService {
             사용자가 동네 가게를 추천해 달라고 하면, 웹 검색으로 확인한 실제 가게 이름을 들어 답하세요.
             가게 이름은 정확히 쓰고, 5곳 이내로 한 줄씩 이유를 붙여 짧게 답하세요.""";
 
-    private final ClaudeClient claude;
+    private final GeminiClient ai;
     private final DiagnosisService diagnosisService;
     private final AiMentionCheckRepository repo;
     private final ObjectMapper objectMapper;
 
-    public AiMentionService(ClaudeClient claude, DiagnosisService diagnosisService,
+    public AiMentionService(GeminiClient ai, DiagnosisService diagnosisService,
                             AiMentionCheckRepository repo, ObjectMapper objectMapper) {
-        this.claude = claude;
+        this.ai = ai;
         this.diagnosisService = diagnosisService;
         this.repo = repo;
         this.objectMapper = objectMapper;
@@ -56,8 +56,8 @@ public class AiMentionService {
 
     /** 트랜잭션을 걸지 않음 — AI 응답을 기다리는 수십 초 동안 DB 연결을 잡고 있지 않도록 (조회·저장은 각자 짧게) */
     public AiMentionResponse check(Store store) {
-        if (!claude.isConfigured()) {
-            throw new ExternalApiException("Claude API 키가 설정되지 않았어요. (ANTHROPIC_API_KEY)", false);
+        if (!ai.isConfigured()) {
+            throw new ExternalApiException("Gemini API 키가 설정되지 않았어요. (GEMINI_API_KEY)", false);
         }
         DiagnosisResponse diag = diagnosisService.latest(store)
                 .orElseThrow(() -> new IllegalArgumentException("먼저 온라인 진단을 한 번 실행해 주세요."));
@@ -72,22 +72,22 @@ public class AiMentionService {
         List<String> qs = questions(diag.searchKeyword());
         ExecutorService pool = Executors.newFixedThreadPool(qs.size()); // 질문 3개 동시에 (총 대기 ≈ 가장 느린 1개)
         try {
-            List<Future<ClaudeClient.Answer>> futures = new ArrayList<>();
-            for (String q : qs) futures.add(pool.submit(() -> claude.askWithWebSearch(SYSTEM, q, 2)));
+            List<Future<GeminiClient.Answer>> futures = new ArrayList<>();
+            for (String q : qs) futures.add(pool.submit(() -> ai.askWithSearch(SYSTEM, q, 1500)));
 
             List<AiMentionResponse.Item> items = new ArrayList<>();
             int mentioned = 0;
             for (int i = 0; i < qs.size(); i++) {
-                ClaudeClient.Answer a = await(futures.get(i));
+                GeminiClient.Answer a = await(futures.get(i));
                 String norm = NaverSearchClient.norm(a.text());
                 boolean hit = names.stream().anyMatch(n -> !n.isEmpty() && norm.contains(n));
                 if (hit) mentioned++;
                 String excerpt = a.text().length() > 400 ? a.text().substring(0, 400) + "…" : a.text();
-                items.add(new AiMentionResponse.Item(qs.get(i), hit, excerpt, a.webSearches()));
+                items.add(new AiMentionResponse.Item(qs.get(i), hit, excerpt, a.webSearches(), a.suggestionsHtml()));
             }
 
-            AiMentionResponse res = new AiMentionResponse(java.time.Instant.now(), claude.model(), qs.size(), mentioned, items);
-            repo.save(new AiMentionCheck(store, qs.size(), mentioned, claude.model(), toJson(res)));
+            AiMentionResponse res = new AiMentionResponse(java.time.Instant.now(), ai.model(), qs.size(), mentioned, items);
+            repo.save(new AiMentionCheck(store, qs.size(), mentioned, ai.model(), toJson(res)));
             return res;
         } finally {
             pool.shutdownNow();
@@ -99,7 +99,7 @@ public class AiMentionService {
         return repo.findFirstByStoreOrderByCheckedAtDesc(store).map(c -> fromJson(c.getDetailJson()));
     }
 
-    private static ClaudeClient.Answer await(Future<ClaudeClient.Answer> f) {
+    private static GeminiClient.Answer await(Future<GeminiClient.Answer> f) {
         try {
             return f.get(150, TimeUnit.SECONDS);
         } catch (ExecutionException e) {

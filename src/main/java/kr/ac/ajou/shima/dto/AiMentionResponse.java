@@ -15,6 +15,7 @@ public record AiMentionResponse(
             String question,
             boolean mentioned,
             String answerExcerpt,   // AI 답변 앞부분 (최대 400자)
-            int webSearches
+            int webSearches,
+            String searchSuggestionsHtml // 구글 검색 제안 HTML — 답변을 보여줄 때 함께 표시해야 함 (Gemini 약관)
     ) {}
 }
