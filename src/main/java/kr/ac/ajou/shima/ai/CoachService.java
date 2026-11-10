@@ -40,6 +40,7 @@ public class CoachService {
     /** 할 일 → 마케팅 기록 종류 (MarketingService.TYPES) */
     private static final Map<String, String> TO_ACTION = new HashMap<>();
     static {
+        TASKS.put("qr_promo", "QR 도장 적립 알리기 — 계산대·테이블 안내문, 계산할 때 한마디 (적립 참여 늘리기)");
         TASKS.put("winback_message", "요즘 안 오신 단골에게 안부·재방문 혜택 알리기 (카톡 채널·SNS·다음 방문 때 인사)");
         TASKS.put("blog_review", "블로그 체험단·방문 후기 요청으로 블로그 언급 늘리기");
         TASKS.put("instagram_post", "인스타그램에 메뉴·분위기 게시물 올리기");
@@ -47,6 +48,7 @@ public class CoachService {
         TASKS.put("naver_place_update", "네이버 플레이스 사진·메뉴·영업시간·소개글 보강");
         TASKS.put("kakao_place_update", "카카오맵 장소 정보(사진·메뉴·영업시간) 보강");
         TASKS.put("event", "재방문 이벤트 (예: 도장 2배 데이)");
+        TO_ACTION.put("qr_promo", "flyer");
         TO_ACTION.put("winback_message", "message");
         TO_ACTION.put("blog_review", "blog_review");
         TO_ACTION.put("instagram_post", "instagram_post");
@@ -64,6 +66,8 @@ public class CoachService {
             - task_type은 반드시 입력의 tasks 목록 key 중 하나.
             - recentActions에 최근 2주 안에 한 종류, history에서 SKIPPED된 종류는 되도록 피한다.
             - atRisk.count가 3 이상이면 winback_message를 우선 검토한다.
+            - weeklyVisitors의 최근 4주 적립(new+revisit) 합이 20명 미만이면, 적립 자체를 알리는 qr_promo를 우선 검토한다.
+              (도장 혜택을 알리는 내용이면 event가 아니라 qr_promo. event는 도장 2배 데이처럼 기간 한정 행사일 때만)
 
             [사실 정확성 — 가장 중요]
             - 숫자·순위·건수는 입력의 evidence 문장과 값에 적힌 그대로만 쓴다. 바꾸거나 추측하지 않는다.
@@ -72,6 +76,7 @@ public class CoachService {
             - 입력에 없는 사실(메뉴 이름, 가격, 원두, 수상, 위치 특징 등)을 지어내지 않는다.
 
             [문구 초안 — 할 일에 맞는 용도로]
+            - qr_promo: 계산대·테이블에 둘 QR 적립 안내문 ("QR 찍고 전화번호만 넣으면 도장" + 리워드 규칙)
             - winback_message: 카톡 채널·인스타 스토리에 올릴 안부 글
             - blog_review: 계산대 후기 안내문 또는 체험단 모집 글
             - instagram_post: 인스타 게시물 캡션
@@ -156,7 +161,9 @@ public class CoachService {
             }
         }
         if (plan == null) {
-            plan = rulePlan(diag.orElse(null), atRisk, history);
+            int recentStamps = statsService.weeklySeries(store, 4).stream()
+                    .mapToInt(w -> w.newCount() + w.revisitCount()).sum();
+            plan = rulePlan(diag.orElse(null), atRisk, history, recentStamps);
             source = "RULE";
             model = null;
         }
@@ -323,11 +330,12 @@ public class CoachService {
      * AI를 못 쓸 때: 이탈 단골 3명↑ → 안부 / 아니면 가장 약한 진단 항목에 맞는 할 일.
      * 최근 건너뛴 종류는 피함.
      */
-    Plan rulePlan(DiagnosisResponse d, List<AtRiskCustomer> atRisk, List<CoachTask> history) {
+    Plan rulePlan(DiagnosisResponse d, List<AtRiskCustomer> atRisk, List<CoachTask> history, int recentStamps) {
         Set<String> avoid = new HashSet<>();
         history.stream().limit(3).filter(t -> t.getStatus() == CoachTask.Status.SKIPPED).forEach(t -> avoid.add(t.getTaskType()));
 
         List<String> order = new ArrayList<>();
+        if (recentStamps < 20) order.add("qr_promo");          // 적립이 아직 적으면 적립부터 알리기
         if (atRisk.size() >= 3) order.add("winback_message");
         if (d != null) {
             d.axes().stream().filter(DiagnosisResponse.Axis::measured)
@@ -349,6 +357,12 @@ public class CoachService {
 
     private static Plan template(String type, int atRiskCount) {
         return switch (type) {
+            case "qr_promo" -> new Plan(type, "QR 도장 적립 알리기",
+                    "최근 4주 적립이 아직 적어요. 적립하는 손님이 많아야 단골을 알아볼 수 있어요.",
+                    List.of("계산대·테이블에 QR 안내문 두기", "계산할 때 \"도장 찍어 드릴까요?\" 한마디", "첫 손님 몇 분은 직접 도와드리기"),
+                    List.of("QR 찍고 전화번호만 넣으면 도장 적립! 앱 설치는 필요 없어요.",
+                            "도장 모아 주세요 ☕ 휴대폰 카메라로 QR만 찍으면 돼요.",
+                            "10초면 끝나는 도장 적립, 계산대 QR을 찍어 주세요."));
             case "winback_message" -> new Plan(type, "요즘 안 오신 단골께 안부 전하기",
                     "평소보다 한참 안 오신 단골이 " + atRiskCount + "분 있어요.",
                     List.of("아래 문구 중 하나를 고르기", "카톡 채널·인스타 스토리에 올리기", "다음에 오시면 반갑게 인사하기"),
