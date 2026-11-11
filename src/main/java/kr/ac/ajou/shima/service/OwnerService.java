@@ -71,6 +71,11 @@ public class OwnerService {
     }
 
     /** 최근 N주 방문 추이 */
+    /** 시간대별 방문 (최근 N주, 평일·주말) */
+    public kr.ac.ajou.shima.dto.HourlyStats hourly(int weeks) {
+        return statsService.hourly(currentStore(), weeks);
+    }
+
     public List<WeekPoint> weeklySeries(int weeks) {
         return statsService.weeklySeries(currentStore(), weeks);
     }

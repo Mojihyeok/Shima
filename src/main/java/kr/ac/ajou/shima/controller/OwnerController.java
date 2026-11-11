@@ -37,9 +37,12 @@ public class OwnerController {
     private final PocService pocService;
     private final MarketingService marketingService;
     private final CoachService coachService;
+    private final kr.ac.ajou.shima.ai.WriterService writerService;
 
     public OwnerController(OwnerService ownerService, kr.ac.ajou.shima.ratelimit.RateLimiter rateLimiter,
-                           PocService pocService, MarketingService marketingService, CoachService coachService) {
+                           PocService pocService, MarketingService marketingService, CoachService coachService,
+                           kr.ac.ajou.shima.ai.WriterService writerService) {
+        this.writerService = writerService;
         this.coachService = coachService;
         this.ownerService = ownerService;
         this.rateLimiter = rateLimiter;
@@ -73,6 +76,16 @@ public class OwnerController {
     @PostMapping("/coach/{id}/skip")
     public CoachResponse coachSkip(@PathVariable Long id) {
         return coachService.skip(id);
+    }
+
+    // ===== SNS 글 대신 쓰기 =====
+
+    /** 인스타 캡션 / 블로그 글 — 하루 20번 */
+    @PostMapping("/write")
+    public kr.ac.ajou.shima.dto.WriteResponse write(@Valid @RequestBody kr.ac.ajou.shima.dto.WriteRequest request) {
+        rateLimiter.hit("write:" + kr.ac.ajou.shima.auth.CurrentOwner.id(), 20, java.time.Duration.ofDays(1),
+                "글 쓰기는 하루 20번까지 할 수 있어요.");
+        return writerService.write(request);
     }
 
     // ===== 마케팅 실행 기록 (그래프 오버레이) =====
@@ -162,6 +175,12 @@ public class OwnerController {
     }
 
     /** 최근 N주 방문 추이 (기본 8주, 최대 26주) */
+    /** 시간대별 방문 — QR 적립 시각, 1시간 단위, 평일·주말 따로 (기본 최근 4주) */
+    @GetMapping("/stats/hourly")
+    public kr.ac.ajou.shima.dto.HourlyStats hourly(@RequestParam(defaultValue = "4") int weeks) {
+        return ownerService.hourly(weeks);
+    }
+
     @GetMapping("/stats/weekly")
     public List<WeekPoint> weekly(@RequestParam(defaultValue = "8") int weeks) {
         return ownerService.weeklySeries(weeks);

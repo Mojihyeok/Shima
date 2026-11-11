@@ -74,6 +74,36 @@ public class StatsService {
         return new Counts(fresh.size(), all.size() - fresh.size());
     }
 
+    // ---------- 시간대별 방문 ----------
+
+    /**
+     * 최근 weeks주(오늘 포함) QR 적립을 1시간 단위로 평일·주말 따로 합산.
+     * 손님은 하루 1번만 적립되므로 "그 시간대에 온 손님 수"와 같다. 적립한 손님만 셈.
+     */
+    @Transactional(readOnly = true)
+    public kr.ac.ajou.shima.dto.HourlyStats hourly(Store store, int weeks) {
+        int w = Math.max(1, Math.min(weeks, 12));
+        LocalDate to = LocalDate.now(KST);
+        LocalDate from = to.minusDays(7L * w - 1);
+        int[] wd = new int[24], we = new int[24];
+        for (VisitLog v : visitRepo.findByStoreAndVisitedAtBetween(store, at(from), Instant.now())) {
+            var t = v.getVisitedAt().atZone(KST);
+            if (isWeekend(t.toLocalDate())) we[t.getHour()]++; else wd[t.getHour()]++;
+        }
+        int weekdayDays = 0, weekendDays = 0;
+        for (LocalDate d = from; !d.isAfter(to); d = d.plusDays(1)) {
+            if (isWeekend(d)) weekendDays++; else weekdayDays++;
+        }
+        List<kr.ac.ajou.shima.dto.HourlyStats.Hour> hours = new ArrayList<>(24);
+        for (int h = 0; h < 24; h++) hours.add(new kr.ac.ajou.shima.dto.HourlyStats.Hour(h, wd[h], we[h]));
+        return new kr.ac.ajou.shima.dto.HourlyStats(from, to, weekdayDays, weekendDays, hours);
+    }
+
+    private static boolean isWeekend(LocalDate d) {
+        DayOfWeek x = d.getDayOfWeek();
+        return x == DayOfWeek.SATURDAY || x == DayOfWeek.SUNDAY;
+    }
+
     // ---------- 최근 N주 추이 ----------
     @Transactional(readOnly = true)
     public List<WeekPoint> weeklySeries(Store store, int weeks) {

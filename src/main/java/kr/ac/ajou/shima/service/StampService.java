@@ -26,7 +26,7 @@ public class StampService {
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
     /** 휴대폰 번호: 010/011/016/017/018/019 + 7~8자리 */
     /** 유입 경로 선택지 (손님 화면 버튼과 맞출 것) */
-    private static final Set<String> SOURCES = Set.of("instagram", "blog", "friend", "pass");
+    private static final Set<String> SOURCES = Set.of("instagram", "blog", "friend", "coworker", "hospital", "pass");
     private static final Pattern MOBILE = Pattern.compile("^01[016789]\\d{7,8}$");
 
     private final QrTokenRepository qrTokenRepository;

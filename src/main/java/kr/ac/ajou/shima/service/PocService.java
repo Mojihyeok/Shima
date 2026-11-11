@@ -142,7 +142,7 @@ public class PocService {
 
         // 5) 유입 경로
         Map<String, Integer> sources = new LinkedHashMap<>();
-        for (String k : List.of("instagram", "blog", "friend", "pass", "none")) sources.put(k, 0);
+        for (String k : List.of("instagram", "blog", "friend", "coworker", "hospital", "pass", "none")) sources.put(k, 0);
         for (Object[] row : customerRepo.countSourcesByFirstVisit(store, start, end)) {
             String key = row[0] == null ? "none" : (String) row[0];
             sources.merge(key, ((Number) row[1]).intValue(), Integer::sum);
