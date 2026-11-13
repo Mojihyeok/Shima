@@ -76,6 +76,8 @@ public class CoachService {
 
             [할 일 고르기]
             - task_type은 반드시 입력의 tasks 목록 key 중 하나.
+            - (사장님 고민이 없거나 고민과 겹칠 때) improvements의 첫 항목(가장 부족한 점)을 해결하는 할 일을 우선 검토한다.
+              고민이 있으면, 고민을 해결하면서 improvements도 함께 좋아지는 방법을 steps에 녹인다.
             - recentActions에 최근 2주 안에 한 종류, history에서 SKIPPED된 종류는 되도록 피한다.
             - (ownerProfile.goal이 없을 때) atRisk.count가 3 이상이면 winback_message를 우선 검토한다.
             - weeklyVisitors의 최근 4주 적립(new+revisit) 합이 20명 미만이면, 적립 자체를 알리는 qr_promo를 우선 검토한다.
@@ -251,11 +253,23 @@ public class CoachService {
             }
         });
 
-        aiMentionService.latest(store).ifPresent(m -> {
+        Optional<AiMentionResponse> mention = aiMentionService.latest(store);
+        mention.ifPresent(m -> {
             ObjectNode mn = c.putObject("aiMention");
             mn.put("asked", m.asked());
             mn.put("mentioned", m.mentioned());
+            var miss = mn.putArray("notMentionedQuestions");
+            m.items().stream().filter(i -> !i.mentioned()).forEach(i -> miss.add(i.question()));
         });
+
+        // 진단·AI 언급률에서 더 좋아질 수 있는 점 (규칙으로 계산한 근거) — 할 일 선택의 근거
+        var imp = c.putArray("improvements");
+        for (CoachResponse.Improvement i : improvements(diag.orElse(null), mention.orElse(null))) {
+            ObjectNode in = imp.addObject();
+            in.put("area", i.area());
+            in.put("status", i.status());
+            in.put("relatedTask", i.taskType());
+        }
 
         var weeks = c.putArray("weeklyVisitors");
         for (WeekPoint w : statsService.weeklySeries(store, 4)) {
@@ -484,7 +498,62 @@ public class CoachService {
         List<AtRiskCustomer> audience = "winback_message".equals(t.getTaskType())
                 ? atRiskService.list(store, 20) : List.of();
         return new CoachResponse(t.getId(), t.getCreatedAt(), t.getStatus().name(), t.getSource(), t.getTaskType(),
-                t.getTitle(), p.why(), p.steps(), p.drafts(), audience, t.getChosenDraft());
+                t.getTitle(), p.why(), p.steps(), p.drafts(), audience, t.getChosenDraft(),
+                improvements(diagnosisService.latest(store).orElse(null), aiMentionService.latest(store).orElse(null)));
+    }
+
+    // ======================= 더 좋아질 수 있는 점 (규칙) =======================
+
+    /**
+     * 진단 항목 중 만점의 85% 미만이거나 측정 못 한 항목 + AI 언급률이 3번 중 다 나오지 않은 경우.
+     * 근거 문장은 진단 결과를 그대로 쓰고(AI가 숫자를 바꾸지 않게), 개선 방법은 항목별로 정해 둔 문장.
+     * 부족한 점수가 큰 순서로 최대 5개.
+     */
+    List<CoachResponse.Improvement> improvements(DiagnosisResponse d, AiMentionResponse m) {
+        record Gap(int gap, CoachResponse.Improvement item) {}
+        List<Gap> out = new ArrayList<>();
+        if (d != null) {
+            for (DiagnosisResponse.Axis a : d.axes()) {
+                String ev = String.join(" · ", a.evidence().stream().limit(3).toList());
+                if (!a.measured()) {
+                    if ("revisit".equals(a.key())) {
+                        out.add(new Gap(a.max() / 2, new CoachResponse.Improvement(a.name(), "아직 측정 전 — " + ev,
+                                "QR 적립 손님이 5명 이상 모이면 재방문을 잴 수 있어요. 계산대에서 적립을 권해 주세요.", "qr_promo")));
+                    } else if ("reputation".equals(a.key())) {
+                        out.add(new Gap(a.max() / 2, new CoachResponse.Improvement(a.name(), "측정 안 됨 — 방문자 리뷰 수 미입력",
+                                "진단할 때 네이버 지도의 방문자 리뷰 수를 적어 주시면 함께 평가해요.", null)));
+                    }
+                    continue;
+                }
+                if (a.points() >= Math.ceil(a.max() * 0.85)) continue;
+                String status = a.points() + " / " + a.max() + "점 — " + ev;
+                CoachResponse.Improvement item = switch (a.key()) {
+                    case "exposure" -> new CoachResponse.Improvement(a.name(), status,
+                            "지도 앱 사진·소개글을 채우고, 블로그 후기를 늘리면 검색에서 더 잘 보여요.", "blog_review");
+                    case "aeo" -> new CoachResponse.Improvement(a.name(), status,
+                            "네이버·카카오 정보를 똑같이 맞추고, 메뉴·분위기·위치를 설명하는 글을 늘리면 AI가 소개하기 쉬워요.", "kakao_place_update");
+                    case "reputation" -> new CoachResponse.Improvement(a.name(), status,
+                            "계산대에 영수증 리뷰 부탁 안내문을 두면 리뷰가 꾸준히 늘어요.", "review_request");
+                    case "activity" -> new CoachResponse.Improvement(a.name(), status,
+                            "인스타·블로그에 가게 소식을 주 1회 올리면 '살아 있는 가게'로 보여요.", "instagram_post");
+                    case "completeness" -> new CoachResponse.Improvement(a.name(), status,
+                            "네이버 플레이스에 빠진 정보(주소·업종·홈페이지/SNS)를 채워 주세요.", "naver_place_update");
+                    case "revisit" -> new CoachResponse.Improvement(a.name(), status,
+                            "요즘 안 오신 단골께 안부를 전하거나 재방문 혜택을 알려 보세요.", "winback_message");
+                    default -> null;
+                };
+                if (item != null) out.add(new Gap(a.max() - a.points(), item));
+            }
+        }
+        if (m != null && m.mentioned() < m.asked()) {
+            List<String> missed = m.items().stream().filter(i -> !i.mentioned()).map(i -> "\"" + i.question() + "\"").toList();
+            out.add(new Gap((m.asked() - m.mentioned()) * 3, new CoachResponse.Improvement("AI 언급률",
+                    "AI에게 " + m.asked() + "번 물어 " + m.mentioned() + "번 추천됨 — 빠진 질문: " + String.join(", ", missed),
+                    "블로그·지도에 '어떤 손님에게 좋은 곳인지'(분위기, 대표 메뉴, 위치)를 구체적으로 적은 글이 늘면 일반 추천에도 나오기 쉬워요.",
+                    "blog_review")));
+        }
+        out.sort(Comparator.comparingInt(Gap::gap).reversed());
+        return out.stream().limit(5).map(Gap::item).toList();
     }
 
     private String toJson(Plan p) {

@@ -15,5 +15,11 @@ public record CoachResponse(
         List<String> steps,     // 실행 단계 (최대 3)
         List<String> drafts,    // 문구 초안 (최대 3)
         List<AtRiskCustomer> audience, // 안부 대상 (winback일 때만, 서버가 붙임 — AI에는 개인정보 안 보냄)
-        Integer chosenDraft
-) {}
+        Integer chosenDraft,
+        List<Improvement> improvements // 진단·AI 언급률에서 더 좋아질 수 있는 점 (규칙으로 계산, 지금 기준)
+) {
+    /**
+     * area: 항목 이름, status: 현재 상태(점수·근거), suggestion: 개선 방법, taskType: 연결되는 할 일(없으면 null)
+     */
+    public record Improvement(String area, String status, String suggestion, String taskType) {}
+}
