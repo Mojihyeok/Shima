@@ -177,6 +177,25 @@ public class OwnerService {
         return atRiskService.list(currentStore(), Math.max(1, Math.min(limit, 100)));
     }
 
+    /** 우리 가게 이야기 조회 */
+    @Transactional(readOnly = true)
+    public kr.ac.ajou.shima.dto.StoreProfile profile() {
+        Store s = currentStore();
+        return new kr.ac.ajou.shima.dto.StoreProfile(s.getOwnerGoal(), s.getStoreNotes(), s.getProfileUpdatedAt());
+    }
+
+    /** 우리 가게 이야기 저장 (빈 문자열은 지움) */
+    @Transactional
+    public kr.ac.ajou.shima.dto.StoreProfile updateProfile(kr.ac.ajou.shima.dto.StoreProfile req) {
+        Store s = currentStore();
+        s.updateProfile(blankToNull(req.ownerGoal()), blankToNull(req.storeNotes()));
+        return new kr.ac.ajou.shima.dto.StoreProfile(s.getOwnerGoal(), s.getStoreNotes(), s.getProfileUpdatedAt());
+    }
+
+    private static String blankToNull(String v) {
+        return v == null || v.isBlank() ? null : v.trim();
+    }
+
     /** 손님 데이터 삭제 (손님이 매장에서 삭제를 요청했을 때) */
     @Transactional
     public void deleteCustomer(Long customerId) {

@@ -44,8 +44,13 @@ public class WriterService {
             너는 동네 카페·식당 사장님 대신 SNS 글을 써 주는 도우미다. 사장님은 글쓰기를 어려워하니,
             그대로 복사해서 올릴 수 있는 완성된 글을 쓴다. 사장님 본인이 쓰는 1인칭("저희 가게", "오늘은")으로.
 
+            [사장님 가게 이야기]
+            - ownerGoal(고민·목표)과 storeNotes(가게 특징·손님층)가 있으면 글의 방향과 말투를 거기에 맞춘다.
+              (예: 손님층이 교직원·간호사면 "퇴근길", "근무 중 휴식"처럼 그분들께 와닿는 표현, 저녁 손님이 목표면 저녁 방문 권유)
+            - storeNotes에 적힌 사실(골목 안, 조용함, 단골이 많음 등)은 글에 써도 된다.
+
             [사실]
-            - 입력의 store, stampReward, note에 있는 사실만 쓴다. 메뉴 이름·가격·재료·원두·수상·손님 후기·할인을 지어내지 않는다.
+            - 입력의 store, storeNotes, stampReward, note에 있는 사실만 쓴다. 메뉴 이름·가격·재료·원두·수상·손님 후기·할인을 지어내지 않는다.
             - note가 비어 있으면 구체적 메뉴 대신 분위기·인사·방문 권유 위주로 쓴다.
             - "맛집", "최고", "1등", "유명한" 같은 자기 자랑 금지. 과장 금지.
 
@@ -100,6 +105,8 @@ public class WriterService {
             s.put("region", store.getRegion());
             in.put("searchKeyword", keyword);
             in.put("stampReward", reward);
+            in.put("ownerGoal", store.getOwnerGoal());
+            in.put("storeNotes", store.getStoreNotes());
             try {
                 GeminiClient.Answer a = ai.ask(SYSTEM, in.toPrettyString(), 3000, "low");
                 WriteResponse r = parse(a.text(), channel, topic);

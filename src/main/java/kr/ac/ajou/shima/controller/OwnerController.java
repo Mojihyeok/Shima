@@ -78,6 +78,18 @@ public class OwnerController {
         return coachService.skip(id);
     }
 
+    // ===== 우리 가게 이야기 (AI 개인화) =====
+
+    @GetMapping("/profile")
+    public kr.ac.ajou.shima.dto.StoreProfile profile() {
+        return ownerService.profile();
+    }
+
+    @PutMapping("/profile")
+    public kr.ac.ajou.shima.dto.StoreProfile updateProfile(@Valid @RequestBody kr.ac.ajou.shima.dto.StoreProfile request) {
+        return ownerService.updateProfile(request);
+    }
+
     // ===== SNS 글 대신 쓰기 =====
 
     /** 인스타 캡션 / 블로그 글 — 하루 20번 */

@@ -48,6 +48,8 @@ public class CoachService {
         TASKS.put("naver_place_update", "네이버 플레이스 사진·메뉴·영업시간·소개글 보강");
         TASKS.put("kakao_place_update", "카카오맵 장소 정보(사진·메뉴·영업시간) 보강");
         TASKS.put("event", "재방문 이벤트 (예: 도장 2배 데이)");
+        TASKS.put("time_promo", "원하는 시간대(예: 저녁) 손님 늘리기 — 그 시간대 한정 메뉴·혜택, 퇴근길·교대 시간 안내");
+        TASKS.put("nearby_org", "근처 직장(병원·학교 등)과 연결 — 직원 대상 단체 주문·제휴 혜택, 직원 게시판·단톡 안내");
         TO_ACTION.put("qr_promo", "flyer");
         TO_ACTION.put("winback_message", "message");
         TO_ACTION.put("blog_review", "blog_review");
@@ -56,16 +58,26 @@ public class CoachService {
         TO_ACTION.put("naver_place_update", "naver_place");
         TO_ACTION.put("kakao_place_update", "other");
         TO_ACTION.put("event", "event");
+        TO_ACTION.put("time_promo", "event");
+        TO_ACTION.put("nearby_org", "other");
     }
 
     private static final String SYSTEM = """
             너는 동네 소상공인(카페·식당) 사장님을 돕는 마케팅 코치다.
             입력 JSON의 데이터만 근거로, 이번 주에 사장님이 할 일을 딱 1개 고른다.
 
+            [사장님 고민·가게 특징 — 최우선]
+            - ownerProfile.goal(고민·목표)이 있으면, 그 고민을 이번 주에 가장 직접 해결하는 할 일을 고른다.
+              (예: "저녁 손님 늘리기" → time_promo 또는 저녁 시간을 겨냥한 다른 할 일, why와 steps에 저녁 시간대를 명시)
+            - ownerProfile.notes의 제약(입지·테이크아웃 불가 등)에 맞지 않는 방법은 쓰지 않는다.
+            - notes의 강점(예: 단골 충성도)을 활용하고, 주 손님층(예: 교직원·간호사)에 맞는 채널·시간·말투로 문구를 쓴다.
+            - why 첫 문장은 사장님 고민을 짚고, 둘째 문장에 데이터 숫자(hourly·sources 등)를 근거로 든다.
+            - notes에 없는 사정(근무 시간표, 주변 시설 이름 등)을 지어내지 않는다.
+
             [할 일 고르기]
             - task_type은 반드시 입력의 tasks 목록 key 중 하나.
             - recentActions에 최근 2주 안에 한 종류, history에서 SKIPPED된 종류는 되도록 피한다.
-            - atRisk.count가 3 이상이면 winback_message를 우선 검토한다.
+            - (ownerProfile.goal이 없을 때) atRisk.count가 3 이상이면 winback_message를 우선 검토한다.
             - weeklyVisitors의 최근 4주 적립(new+revisit) 합이 20명 미만이면, 적립 자체를 알리는 qr_promo를 우선 검토한다.
               (도장 혜택을 알리는 내용이면 event가 아니라 qr_promo. event는 도장 2배 데이처럼 기간 한정 행사일 때만)
 
@@ -83,6 +95,8 @@ public class CoachService {
             - review_request: 계산대에 둘 리뷰 부탁 안내문
             - naver_place_update / kakao_place_update: 지도 앱 '가게 소개' 칸에 넣을 소개글 (담백한 설명체)
             - event: 이벤트 안내 글
+            - time_promo: 그 시간대 한정 혜택·메뉴 안내문 (매장 안내문·SNS용)
+            - nearby_org: 근처 직장 직원 게시판·단톡에 올릴 안내 글 (정중한 말투)
             - 각 150자 이내, 3개는 서로 다른 톤(담백 / 친근 / 짧게).
             - 금지: "맛집", "최고", "1등", "유명한" 같은 자기 자랑·과장, 가격·할인 약속(사장님이 정하지 않은 혜택), 손님 개인정보.
             - 이모지는 문구당 1개까지.
@@ -105,13 +119,15 @@ public class CoachService {
     private final AiMentionService aiMentionService;
     private final StatsService statsService;
     private final AtRiskService atRiskService;
+    private final CustomerRepository customerRepo;
     private final ObjectMapper om;
 
     public CoachService(GeminiClient ai, StoreRepository storeRepository, CoachTaskRepository taskRepo,
                         FeedbackLogRepository feedbackRepo, MarketingActionRepository actionRepo,
                         RewardRuleRepository ruleRepo, DiagnosisService diagnosisService,
                         AiMentionService aiMentionService, StatsService statsService,
-                        AtRiskService atRiskService, ObjectMapper om) {
+                        AtRiskService atRiskService, CustomerRepository customerRepo, ObjectMapper om) {
+        this.customerRepo = customerRepo;
         this.ai = ai;
         this.storeRepository = storeRepository;
         this.taskRepo = taskRepo;
@@ -163,7 +179,7 @@ public class CoachService {
         if (plan == null) {
             int recentStamps = statsService.weeklySeries(store, 4).stream()
                     .mapToInt(w -> w.newCount() + w.revisitCount()).sum();
-            plan = rulePlan(diag.orElse(null), atRisk, history, recentStamps);
+            plan = rulePlan(store, diag.orElse(null), atRisk, history, recentStamps);
             source = "RULE";
             model = null;
         }
@@ -277,10 +293,46 @@ public class CoachService {
             hn.put("status", t.getStatus().name());
         }
 
+        // 사장님 고민·가게 특징 (최우선)
+        if (store.getOwnerGoal() != null || store.getStoreNotes() != null) {
+            ObjectNode op = c.putObject("ownerProfile");
+            op.put("goal", store.getOwnerGoal());
+            op.put("notes", store.getStoreNotes());
+        }
+
+        // 시간대 (최근 4주 QR 적립, 하루 평균) — 저녁(17~21시) 비중 포함
+        HourlyStats hs = statsService.hourly(store, 4);
+        ObjectNode hn = c.putObject("hourly");
+        hn.put("note", "QR 적립 시각 기준, 적립한 손님만");
+        hn.set("weekday", hourSummary(hs, true));
+        hn.set("weekend", hourSummary(hs, false));
+
+        // 유입 경로 (최근 1년 첫 방문 손님)
+        ObjectNode src = c.putObject("sources");
+        for (Object[] row : customerRepo.countSourcesByFirstVisit(store, now.minus(Duration.ofDays(365)), now)) {
+            src.put(row[0] == null ? "none" : (String) row[0], ((Number) row[1]).intValue());
+        }
+
         ObjectNode tasks = c.putObject("tasks");
         TASKS.forEach(tasks::put);
         c.put("today", LocalDate.now(StatsService.KST).toString());
         return c;
+    }
+
+    private ObjectNode hourSummary(HourlyStats hs, boolean weekday) {
+        int days = Math.max(1, weekday ? hs.weekdayDays() : hs.weekendDays());
+        int total = 0, evening = 0, peakHour = -1, peakCnt = 0;
+        for (HourlyStats.Hour h : hs.hours()) {
+            int v = weekday ? h.weekdayTotal() : h.weekendTotal();
+            total += v;
+            if (h.hour() >= 17 && h.hour() <= 21) evening += v;
+            if (v > peakCnt) { peakCnt = v; peakHour = h.hour(); }
+        }
+        ObjectNode n = om.createObjectNode();
+        n.put("visitsPerDay", Math.round(total * 10.0 / days) / 10.0);
+        n.put("peakHour", peakHour);
+        n.put("eveningShare17to21", total == 0 ? null : Math.round(evening * 100.0 / total) + "%");
+        return n;
     }
 
     // ======================= AI 출력 해석 =======================
@@ -330,11 +382,15 @@ public class CoachService {
      * AI를 못 쓸 때: 이탈 단골 3명↑ → 안부 / 아니면 가장 약한 진단 항목에 맞는 할 일.
      * 최근 건너뛴 종류는 피함.
      */
-    Plan rulePlan(DiagnosisResponse d, List<AtRiskCustomer> atRisk, List<CoachTask> history, int recentStamps) {
+    Plan rulePlan(Store store, DiagnosisResponse d, List<AtRiskCustomer> atRisk, List<CoachTask> history, int recentStamps) {
         Set<String> avoid = new HashSet<>();
         history.stream().limit(3).filter(t -> t.getStatus() == CoachTask.Status.SKIPPED).forEach(t -> avoid.add(t.getTaskType()));
 
         List<String> order = new ArrayList<>();
+        String goal = store.getOwnerGoal() == null ? "" : store.getOwnerGoal();
+        String notes = store.getStoreNotes() == null ? "" : store.getStoreNotes();
+        if (goal.matches("(?s).*(저녁|오후|아침|점심|주말|시간).*")) order.add("time_promo"); // 사장님 고민 우선
+        if ((goal + notes).matches("(?s).*(병원|학교|직장|교직원|간호|회사|직원).*")) order.add("nearby_org");
         if (recentStamps < 20) order.add("qr_promo");          // 적립이 아직 적으면 적립부터 알리기
         if (atRisk.size() >= 3) order.add("winback_message");
         if (d != null) {
@@ -355,8 +411,21 @@ public class CoachService {
         return template(type, atRisk.size());
     }
 
+
     private static Plan template(String type, int atRiskCount) {
         return switch (type) {
+            case "time_promo" -> new Plan(type, "저녁 시간 손님 늘리기",
+                    "원하시는 시간대에 오실 이유를 하나 만들어 드리면 좋아요.",
+                    List.of("저녁 시간 한정 혜택 하나 정하기", "계산대·SNS에 미리 알리기", "단골분께 먼저 말씀드리기"),
+                    List.of("퇴근길에 들러 쉬어 가세요. 저녁 시간에도 편하게 머무르실 수 있어요 ☕",
+                            "하루 마무리는 조용한 골목 카페에서. 저녁에도 문 열어 두었어요.",
+                            "일 끝나고 한 잔 어떠세요? 저녁에도 기다리고 있을게요."));
+            case "nearby_org" -> new Plan(type, "근처 직장 분들께 알리기",
+                    "가까운 직장에서 오시는 분들이 많아요. 동료분들께도 알려지면 좋아요.",
+                    List.of("자주 오시는 직원분께 안내문 부탁드리기", "직원 단체 주문 가능 여부 정하기", "다음 방문 때 감사 인사"),
+                    List.of("가까운 곳에서 일하시는 분들 편하게 쉬어 가세요. 단체 주문도 미리 말씀해 주세요.",
+                            "근무 중 잠깐의 휴식, 골목 안 조용한 카페에서 보내세요.",
+                            "동료분들과 함께 오세요. 늘 찾아 주셔서 감사합니다."));
             case "qr_promo" -> new Plan(type, "QR 도장 적립 알리기",
                     "최근 4주 적립이 아직 적어요. 적립하는 손님이 많아야 단골을 알아볼 수 있어요.",
                     List.of("계산대·테이블에 QR 안내문 두기", "계산할 때 \"도장 찍어 드릴까요?\" 한마디", "첫 손님 몇 분은 직접 도와드리기"),
